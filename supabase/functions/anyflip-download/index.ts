@@ -145,7 +145,7 @@ Deno.serve(async (req) => {
         try {
           const raw = await fetchImage(pages[idx].url, referer);
           if (!raw) { failed++; console.warn(`Page ${idx + 1}: fetch failed`); continue; }
-          results[idx] = await toJpegOrPng(raw);
+          results[idx] = await toPngBytes(raw);
         } catch (e) {
           failed++;
           console.warn(`Page ${idx + 1}: ${(e as Error).message}`);
