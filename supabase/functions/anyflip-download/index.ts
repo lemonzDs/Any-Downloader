@@ -2,9 +2,9 @@
 // Reads htmlConfig.fliphtml5_pages from config.js, fetches each image (with Referer),
 // converts WebP -> JPEG when needed, and merges into a PDF.
 
-import { PDFDocument } from "https://esm.sh/pdf-lib@1.17.1";
-import { decode as decodeWebp } from "https://esm.sh/@jsquash/webp@1.4.0?bundle";
-import { encode as encodeJpeg } from "https://esm.sh/@jsquash/jpeg@1.5.0?bundle";
+import { PDFDocument } from "npm:pdf-lib@1.17.1";
+import decodeWebp from "npm:@jsquash/webp@1.4.0/decode.js";
+import encodeJpeg from "npm:@jsquash/jpeg@1.5.0/encode.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
