@@ -88,9 +88,9 @@ async function fetchImage(url: string, referer: string): Promise<{ bytes: Uint8A
 
 async function toPngOrJpg(img: { bytes: Uint8Array; type: "jpg" | "png" | "webp" }): Promise<{ bytes: Uint8Array; type: "jpg" | "png" }> {
   if (img.type === "jpg" || img.type === "png") return img;
-  const decoded = await Image.decode(img.bytes);
-  const png = await decoded.encode(); // PNG
-  return { bytes: new Uint8Array(png), type: "png" };
+  const imageData = await decodeWebp(img.bytes); // { data, width, height }
+  const jpeg = await encodeJpeg(imageData, { quality: 88 });
+  return { bytes: new Uint8Array(jpeg), type: "jpg" };
 }
 
 Deno.serve(async (req) => {
