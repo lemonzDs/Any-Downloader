@@ -100,11 +100,12 @@ async function fetchImage(url: string, referer: string): Promise<{ bytes: Uint8A
   return null;
 }
 
-async function toJpegOrPng(img: { bytes: Uint8Array; type: "jpg" | "png" | "webp" }): Promise<{ bytes: Uint8Array; type: "jpg" | "png" }> {
-  if (img.type !== "webp") return img as { bytes: Uint8Array; type: "jpg" | "png" };
-  const decoded = await decodeWebp(img.bytes); // ImageData
-  const jpeg = await encodeJpeg(decoded, { quality: 88 });
-  return { bytes: new Uint8Array(jpeg), type: "jpg" };
+async function toPngBytes(img: { bytes: Uint8Array; type: "jpg" | "png" | "webp" }): Promise<{ bytes: Uint8Array; type: "jpg" | "png" }> {
+  if (img.type === "jpg" || img.type === "png") return img;
+  // WebP → decode and re-encode as PNG (imagescript supports WebP)
+  const decoded = await Image.decode(img.bytes);
+  const png = await decoded.encode(); // PNG
+  return { bytes: new Uint8Array(png), type: "png" };
 }
 
 Deno.serve(async (req) => {
