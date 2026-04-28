@@ -2,7 +2,7 @@
 // Reads htmlConfig.fliphtml5_pages from config.js, fetches each image (with Referer),
 // converts WebP -> PNG when needed, and merges into a PDF.
 
-import { PDFDocument } from "https://cdn.skypack.dev/pdf-lib@1.17.1?dts";
+import { PDFDocument } from "https://esm.sh/pdf-lib@1.17.1";
 import { Image } from "https://deno.land/x/imagescript@1.2.17/mod.ts";
 
 const corsHeaders = {
