@@ -3,7 +3,8 @@
 // converts WebP -> PNG when needed, and merges into a PDF.
 
 import { PDFDocument } from "https://esm.sh/pdf-lib@1.17.1";
-import { Image } from "https://deno.land/x/imagescript@1.2.17/mod.ts";
+import decodeWebp from "npm:@jsquash/webp@1.4.0/decode";
+import encodeJpeg from "npm:@jsquash/jpeg@1.5.0/encode";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
