@@ -2,9 +2,8 @@
 // Reads htmlConfig.fliphtml5_pages from config.js, fetches each image (with Referer),
 // converts WebP -> JPEG when needed, and merges into a PDF.
 
-import { PDFDocument } from "npm:pdf-lib@1.17.1";
-import decodeWebp from "npm:@jsquash/webp@1.4.0/decode.js";
-import encodeJpeg from "npm:@jsquash/jpeg@1.5.0/encode.js";
+import { PDFDocument } from "https://cdn.skypack.dev/pdf-lib@1.17.1?dts";
+import { Image } from "https://deno.land/x/imagescript@1.2.17/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
