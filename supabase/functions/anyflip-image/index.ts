@@ -27,16 +27,27 @@ Deno.serve(async (req) => {
 
   const u = new URL(req.url);
   const target = u.searchParams.get("url");
-  if (!target || !/^https:\/\/online\.anyflip\.com\//.test(target)) {
-    return new Response(JSON.stringify({ error: "Bad url" }), {
+  let parsed: URL | null = null;
+  try { if (target) parsed = new URL(target); } catch { /* ignore */ }
+  if (!parsed || !/(^|\.)anyflip\.com$/i.test(parsed.hostname)) {
+    return new Response(JSON.stringify({ error: "Bad url — must be an anyflip.com host" }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+  // Normalise host to online.anyflip.com (CDN host)
+  parsed.hostname = "online.anyflip.com";
+  const normalisedTarget = parsed.toString();
 
-  // Derive book base: https://online.anyflip.com/<user>/<book>/
-  const m = target.match(/^(https:\/\/online\.anyflip\.com\/[^/]+\/[^/]+)\//);
-  const bookBase = m ? `${m[1]}/` : target.replace(/[^/]+$/, "");
+  // Derive book base from path: /<user>/<book>/...
+  const pathParts = parsed.pathname.split("/").filter(Boolean);
+  if (pathParts.length < 2) {
+    return new Response(JSON.stringify({ error: "URL imej tidak mengandungi /<user>/<book>/" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  const bookBase = `https://online.anyflip.com/${pathParts[0]}/${pathParts[1]}/`;
   const referer = `${bookBase}mobile/index.html`;
   const filename = target.split("/").pop()!;
 
