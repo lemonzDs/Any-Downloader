@@ -3,14 +3,26 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { Label } from "@/components/ui/label";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
-import { Download, BookOpen, Loader2, Sparkles, FileDown } from "lucide-react";
+import { Download, BookOpen, Loader2, Sparkles, FileDown, ChevronDown, AlertCircle, CheckCircle2 } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-// Decode WebP/JPG via browser <img>+canvas → JPEG bytes for pdf-lib
+interface PageDiag {
+  index: number;
+  originalUrl: string;
+  status: "pending" | "ok" | "fail";
+  proxyStatus?: number;
+  finalUrl?: string;
+  referer?: string;
+  attempts?: Array<{ url: string; status: number; ms: number; contentType: string | null }>;
+  error?: string;
+}
+
 async function imageBlobToJpeg(blob: Blob): Promise<{ bytes: Uint8Array; w: number; h: number }> {
   const url = URL.createObjectURL(blob);
   try {
@@ -38,16 +50,27 @@ async function imageBlobToJpeg(blob: Blob): Promise<{ bytes: Uint8Array; w: numb
 
 const Index = () => {
   const [url, setUrl] = useState("");
+  const [concurrency, setConcurrency] = useState(3);
+  const [delayMs, setDelayMs] = useState(150);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("");
+  const [diags, setDiags] = useState<PageDiag[]>([]);
+  const [diagOpen, setDiagOpen] = useState(false);
+
+  const updateDiag = (i: number, patch: Partial<PageDiag>) => {
+    setDiags((prev) => {
+      const next = [...prev];
+      next[i] = { ...next[i], ...patch };
+      return next;
+    });
+  };
 
   const handleDownload = async () => {
     if (!url.trim()) { toast.error("Sila masukkan URL AnyFlip"); return; }
-    setLoading(true); setProgress(0); setStatus("Mengesan buku...");
+    setLoading(true); setProgress(0); setStatus("Mengesan buku..."); setDiags([]); setDiagOpen(false);
 
     try {
-      // 1. Fetch metadata
       const metaRes = await fetch(`${SUPABASE_URL}/functions/v1/anyflip-download`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY },
@@ -60,31 +83,48 @@ const Index = () => {
       const { title, pages } = await metaRes.json() as { title: string; pages: string[] };
       const total = pages.length;
       setStatus(`Memuat turun ${total} halaman...`);
+      setDiags(pages.map((p, i) => ({ index: i, originalUrl: p, status: "pending" })));
 
-      // 2. Fetch + decode each page (concurrency 3)
       const decoded: ({ bytes: Uint8Array; w: number; h: number } | null)[] = new Array(total).fill(null);
-      let cursor = 0, done = 0, failed = 0;
+      let cursor = 0, done = 0;
+      const conc = Math.max(1, Math.min(8, concurrency));
+      const pacing = Math.max(0, delayMs);
+
       const work = async () => {
         while (true) {
           const i = cursor++;
           if (i >= total) return;
+          if (pacing > 0) await new Promise((r) => setTimeout(r, pacing));
           try {
             const proxied = `${SUPABASE_URL}/functions/v1/anyflip-image?url=${encodeURIComponent(pages[i])}`;
             const r = await fetch(proxied, { headers: { Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY } });
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            const blob = await r.blob();
-            decoded[i] = await imageBlobToJpeg(blob);
+            const finalUrl = r.headers.get("X-Anyflip-Final-Url") || undefined;
+            const referer = r.headers.get("X-Anyflip-Referer") || undefined;
+            const attemptsRaw = r.headers.get("X-Anyflip-Attempts");
+            const attempts = attemptsRaw ? JSON.parse(attemptsRaw) : undefined;
+
+            if (!r.ok) {
+              const errBody = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+              updateDiag(i, {
+                status: "fail", proxyStatus: r.status, finalUrl, referer, attempts,
+                error: errBody.error || `HTTP ${r.status}`,
+              });
+            } else {
+              const blob = await r.blob();
+              decoded[i] = await imageBlobToJpeg(blob);
+              updateDiag(i, { status: "ok", proxyStatus: r.status, finalUrl, referer, attempts });
+            }
           } catch (e) {
-            failed++;
-            console.warn(`Page ${i + 1}:`, e);
+            updateDiag(i, { status: "fail", error: e instanceof Error ? e.message : String(e) });
           }
           done++;
           setProgress(Math.round((done / total) * 90));
         }
       };
-      await Promise.all([work(), work(), work()]);
+      await Promise.all(Array.from({ length: conc }, () => work()));
 
-      // 3. Build PDF
+      const failed = decoded.filter((p) => !p).length;
+
       setStatus("Membina PDF...");
       const pdf = await PDFDocument.create();
       for (const p of decoded) {
@@ -93,11 +133,10 @@ const Index = () => {
         const page = pdf.addPage([p.w, p.h]);
         page.drawImage(img, { x: 0, y: 0, width: p.w, height: p.h });
       }
-      if (pdf.getPageCount() === 0) throw new Error("Semua halaman gagal");
+      if (pdf.getPageCount() === 0) throw new Error("Semua halaman gagal — semak panel diagnostik");
       const bytes = await pdf.save();
       setProgress(100);
 
-      // 4. Download
       const blob = new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
@@ -105,16 +144,25 @@ const Index = () => {
       link.click();
       URL.revokeObjectURL(link.href);
 
-      toast.success(`Siap! ${total - failed}/${total} halaman`);
+      if (failed > 0) {
+        toast.warning(`Siap dengan ${failed} halaman gagal — buka panel diagnostik`);
+        setDiagOpen(true);
+      } else {
+        toast.success(`Siap! ${total} halaman`);
+      }
       setStatus("");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
       setStatus("");
+      setDiagOpen(true);
     } finally {
       setLoading(false);
       setTimeout(() => setProgress(0), 1500);
     }
   };
+
+  const failedCount = diags.filter((d) => d.status === "fail").length;
+  const okCount = diags.filter((d) => d.status === "ok").length;
 
   return (
     <main className="min-h-screen flex items-center justify-center p-4 sm:p-6">
@@ -134,11 +182,26 @@ const Index = () => {
 
         <Card className="p-6 sm:p-8 space-y-5 border-0" style={{ boxShadow: "var(--shadow-card)" }}>
           <div className="space-y-2">
-            <label className="text-sm font-medium" htmlFor="url">URL Buku AnyFlip</label>
+            <Label htmlFor="url">URL Buku AnyFlip</Label>
             <Input id="url" type="url" placeholder="https://anyflip.com/abcd/efgh/" value={url}
                    onChange={(e) => setUrl(e.target.value)} disabled={loading}
                    onKeyDown={(e) => e.key === "Enter" && !loading && handleDownload()}
                    className="h-12 text-base" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="conc" className="text-xs">Concurrency (1–8)</Label>
+              <Input id="conc" type="number" min={1} max={8} value={concurrency}
+                     onChange={(e) => setConcurrency(parseInt(e.target.value) || 1)}
+                     disabled={loading} className="h-10" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="delay" className="text-xs">Delay antara request (ms)</Label>
+              <Input id="delay" type="number" min={0} max={5000} step={50} value={delayMs}
+                     onChange={(e) => setDelayMs(parseInt(e.target.value) || 0)}
+                     disabled={loading} className="h-10" />
+            </div>
           </div>
 
           <Button onClick={handleDownload} disabled={loading}
@@ -150,10 +213,52 @@ const Index = () => {
 
           {progress > 0 && <Progress value={progress} className="h-2" />}
 
+          {diags.length > 0 && (
+            <Collapsible open={diagOpen} onOpenChange={setDiagOpen}>
+              <CollapsibleTrigger className="flex items-center justify-between w-full text-sm py-2 px-3 rounded-md bg-muted hover:bg-muted/70 transition">
+                <span className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-green-600" /> {okCount} ok
+                  {failedCount > 0 && (<><AlertCircle className="w-4 h-4 text-destructive ml-2" /> {failedCount} gagal</>)}
+                </span>
+                <ChevronDown className={`w-4 h-4 transition ${diagOpen ? "rotate-180" : ""}`} />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-3 space-y-2 max-h-80 overflow-y-auto">
+                {diags.map((d) => (
+                  <div key={d.index} className={`text-xs p-2 rounded border ${
+                    d.status === "fail" ? "border-destructive/40 bg-destructive/5" :
+                    d.status === "ok" ? "border-border bg-background" : "border-border bg-muted/30"
+                  }`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono">#{d.index + 1}</span>
+                      <span className={d.status === "fail" ? "text-destructive font-medium" : "text-muted-foreground"}>
+                        {d.status === "pending" ? "..." : d.status === "ok" ? `OK ${d.proxyStatus}` : `FAIL ${d.proxyStatus ?? ""}`}
+                      </span>
+                    </div>
+                    <div className="mt-1 break-all text-muted-foreground">{d.originalUrl}</div>
+                    {d.finalUrl && d.finalUrl !== d.originalUrl && (
+                      <div className="mt-1 break-all"><span className="text-muted-foreground">→ final:</span> {d.finalUrl}</div>
+                    )}
+                    {d.referer && <div className="mt-1 break-all"><span className="text-muted-foreground">referer:</span> {d.referer}</div>}
+                    {d.error && <div className="mt-1 text-destructive break-all">error: {d.error}</div>}
+                    {d.attempts && d.status === "fail" && (
+                      <div className="mt-1 space-y-0.5">
+                        {d.attempts.map((a, j) => (
+                          <div key={j} className="font-mono text-[10px] text-muted-foreground break-all">
+                            [{a.status}] {a.ms}ms {a.url}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
             <Feature icon={<Sparkles className="w-4 h-4" />} text="Auto kesan halaman" />
             <Feature icon={<FileDown className="w-4 h-4" />} text="PDF berkualiti tinggi" />
-            <Feature icon={<BookOpen className="w-4 h-4" />} text="Tiada had buku" />
+            <Feature icon={<BookOpen className="w-4 h-4" />} text="Diagnostik penuh" />
           </div>
         </Card>
 
