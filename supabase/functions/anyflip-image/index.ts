@@ -19,32 +19,29 @@ Deno.serve(async (req) => {
     const m = target.match(/^(https:\/\/online\.anyflip\.com\/[^/]+\/[^/]+)\//);
     const bookBase = m ? `${m[1]}/` : target.replace(/[^/]+$/, "");
 
-    async function tryFetch(referer: string) {
-      return await fetch(target, {
+    async function tryFetch(url: string, referer: string) {
+      return await fetch(url, {
         headers: {
           "User-Agent": UA,
           Referer: referer,
           Accept: "image/webp,image/*,*/*;q=0.8",
           "Accept-Language": "en-US,en;q=0.9",
-"Sec-Fetch-Dest": "image",
-          "Sec-Fetch-Mode": "no-cors",
-          "Sec-Fetch-Site": "same-origin",
         },
       });
     }
 
-    // Try a few referer variants — different books require different ones
-    const referers = [
-      `${bookBase}mobile/index.html`,
-      `${bookBase}index.html`,
-      bookBase,
-      "https://online.anyflip.com/",
+    const referer = `${bookBase}mobile/index.html`;
+    // Build URL candidates — config.js sometimes lists bare filenames that actually live in /files/large/
+    const filename = target.split("/").pop()!;
+    const candidates = [
+      target,
+      `${bookBase}files/large/${filename}`,
+      `${bookBase}files/mobile/${filename}`,
     ];
     let r: Response | null = null;
-    for (const ref of referers) {
-      r = await tryFetch(ref);
+    for (const c of candidates) {
+      r = await tryFetch(c, referer);
       if (r.ok) break;
-      // consume body to free resources
       try { await r.arrayBuffer(); } catch { /* ignore */ }
     }
     if (!r || !r.ok) return new Response(`Upstream ${r?.status ?? 502}`, { status: r?.status ?? 502, headers: corsHeaders });
