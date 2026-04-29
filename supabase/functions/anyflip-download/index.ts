@@ -9,12 +9,35 @@ const corsHeaders = {
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
-function parseAnyflipUrl(input: string): { baseUrl: string } {
-  const cleaned = input.trim().replace(/[?#].*$/, "")
-    .replace(/\/(mobile|basic|index)(\.html?)?\/?$/i, "").replace(/\/+$/, "");
-  const m = cleaned.match(/^https?:\/\/[^/]+\/([^/]+)\/([^/?#]+)/i);
-  if (!m) throw new Error("URL AnyFlip tidak sah. Contoh: https://anyflip.com/abcd/efgh/");
-  return { baseUrl: `https://online.anyflip.com/${m[1]}/${m[2]}` };
+// Accepts any of:
+//   anyflip.com/abcd/efgh        anyflip.com/abcd/efgh/
+//   https://anyflip.com/abcd/efgh/basic/    .../mobile/    .../index.html
+//   https://online.anyflip.com/abcd/efgh/123.html
+//   https://www.anyflip.com/abcd/efgh/?fr=sNTIxMzM...
+//   https://online.anyflip.com/abcd/efgh/files/large/xyz.webp (image url)
+function parseAnyflipUrl(input: string): { baseUrl: string; userId: string; bookId: string } {
+  let raw = input.trim();
+  if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
+  let parsed: URL;
+  try { parsed = new URL(raw); } catch {
+    throw new Error("URL AnyFlip tidak sah. Contoh: https://anyflip.com/abcd/efgh/");
+  }
+  if (!/(^|\.)anyflip\.com$/i.test(parsed.hostname)) {
+    throw new Error(`Hos bukan AnyFlip: ${parsed.hostname}`);
+  }
+  // Split path, drop empty segments and known suffixes/files
+  const parts = parsed.pathname.split("/").filter(Boolean).filter((p) => {
+    if (/^(mobile|basic|index)(\.html?)?$/i.test(p)) return false;
+    if (/\.(html?|js|css|webp|jpe?g|png|gif)$/i.test(p)) return false;
+    if (/^\d+$/.test(p)) return false; // page number segment
+    if (/^files$/i.test(p) || /^(large|mobile|thumbnail)$/i.test(p)) return false;
+    return true;
+  });
+  if (parts.length < 2) {
+    throw new Error("URL AnyFlip tidak sah — jangkakan format /<user>/<book>/");
+  }
+  const [userId, bookId] = parts;
+  return { baseUrl: `https://online.anyflip.com/${userId}/${bookId}`, userId, bookId };
 }
 
 async function fetchConfig(baseUrl: string) {
