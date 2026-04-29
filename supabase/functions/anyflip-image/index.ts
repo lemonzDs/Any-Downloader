@@ -49,13 +49,14 @@ Deno.serve(async (req) => {
   }
   const bookBase = `https://online.anyflip.com/${pathParts[0]}/${pathParts[1]}/`;
   const referer = `${bookBase}mobile/index.html`;
-  const filename = target.split("/").pop()!;
+  const filename = pathParts[pathParts.length - 1];
 
   // Candidates — config.js sometimes lists bare filenames that actually live in /files/large/
   const candidates = Array.from(new Set([
-    target,
+    normalisedTarget,
     `${bookBase}files/large/${filename}`,
     `${bookBase}files/mobile/${filename}`,
+    `${bookBase}${filename}`,
   ]));
 
   const attempts: Attempt[] = [];
