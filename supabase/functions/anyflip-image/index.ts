@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
           Referer: referer,
           Accept: "image/webp,image/*,*/*;q=0.8",
           "Accept-Language": "en-US,en;q=0.9",
-besides          "Sec-Fetch-Dest": "image",
+"Sec-Fetch-Dest": "image",
           "Sec-Fetch-Mode": "no-cors",
           "Sec-Fetch-Site": "same-origin",
         },
