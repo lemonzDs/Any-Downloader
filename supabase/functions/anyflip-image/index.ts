@@ -15,9 +15,39 @@ Deno.serve(async (req) => {
     if (!target || !/^https:\/\/online\.anyflip\.com\//.test(target)) {
       return new Response("Bad url", { status: 400, headers: corsHeaders });
     }
-    const referer = target.replace(/\/files\/.*$/, "/");
-    const r = await fetch(target, { headers: { "User-Agent": UA, Referer: referer } });
-    if (!r.ok) return new Response(`Upstream ${r.status}`, { status: r.status, headers: corsHeaders });
+    // Derive book base: https://online.anyflip.com/<user>/<book>/
+    const m = target.match(/^(https:\/\/online\.anyflip\.com\/[^/]+\/[^/]+)\//);
+    const bookBase = m ? `${m[1]}/` : target.replace(/[^/]+$/, "");
+
+    async function tryFetch(referer: string) {
+      return await fetch(target, {
+        headers: {
+          "User-Agent": UA,
+          Referer: referer,
+          Accept: "image/webp,image/*,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+besides          "Sec-Fetch-Dest": "image",
+          "Sec-Fetch-Mode": "no-cors",
+          "Sec-Fetch-Site": "same-origin",
+        },
+      });
+    }
+
+    // Try a few referer variants — different books require different ones
+    const referers = [
+      `${bookBase}mobile/index.html`,
+      `${bookBase}index.html`,
+      bookBase,
+      "https://online.anyflip.com/",
+    ];
+    let r: Response | null = null;
+    for (const ref of referers) {
+      r = await tryFetch(ref);
+      if (r.ok) break;
+      // consume body to free resources
+      try { await r.arrayBuffer(); } catch { /* ignore */ }
+    }
+    if (!r || !r.ok) return new Response(`Upstream ${r?.status ?? 502}`, { status: r?.status ?? 502, headers: corsHeaders });
     return new Response(r.body, {
       headers: {
         ...corsHeaders,
