@@ -52,11 +52,34 @@ const Index = () => {
   const [url, setUrl] = useState("");
   const [concurrency, setConcurrency] = useState(3);
   const [delayMs, setDelayMs] = useState(150);
+  const [autoTune, setAutoTune] = useState(true);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("");
   const [diags, setDiags] = useState<PageDiag[]>([]);
   const [diagOpen, setDiagOpen] = useState(false);
+  const [canonical, setCanonical] = useState<{ url: string; chain: string[] } | null>(null);
+  const [resolving, setResolving] = useState(false);
+
+  const handleResolve = async () => {
+    if (!url.trim()) { toast.error("Sila masukkan URL AnyFlip"); return; }
+    setResolving(true); setCanonical(null);
+    try {
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/anyflip-download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY },
+        body: JSON.stringify({ url: url.trim(), resolveOnly: true }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      setCanonical({ url: data.canonicalUrl, chain: data.redirectChain || [] });
+      toast.success("URL dinormalkan");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setResolving(false);
+    }
+  };
 
   const updateDiag = (i: number, patch: Partial<PageDiag>) => {
     setDiags((prev) => {
@@ -80,21 +103,42 @@ const Index = () => {
         const err = await metaRes.json().catch(() => ({ error: "Ralat" }));
         throw new Error(err.error || `HTTP ${metaRes.status}`);
       }
-      const { title, pages } = await metaRes.json() as { title: string; pages: string[] };
+      const { title, pages } = await metaRes.json() as { title: string; pages: string[]; canonicalUrl?: string };
       const total = pages.length;
       setStatus(`Memuat turun ${total} halaman...`);
       setDiags(pages.map((p, i) => ({ index: i, originalUrl: p, status: "pending" })));
 
       const decoded: ({ bytes: Uint8Array; w: number; h: number } | null)[] = new Array(total).fill(null);
       let cursor = 0, done = 0;
-      const conc = Math.max(1, Math.min(8, concurrency));
-      const pacing = Math.max(0, delayMs);
+      let activeConc = Math.max(1, Math.min(8, concurrency));
+      let activePace = Math.max(0, delayMs);
+      let throttleUntil = 0;
+      let recentOk = 0;
+
+      const onThrottle = () => {
+        if (!autoTune) return;
+        const backoff = Math.min(8000, 800 + activePace * 2);
+        throttleUntil = Date.now() + backoff;
+        activePace = Math.min(2000, Math.max(activePace * 2, 400));
+        activeConc = Math.max(1, activeConc - 1);
+        recentOk = 0;
+        setStatus(`Dikenakan throttle — backoff ${backoff}ms, conc=${activeConc}, delay=${activePace}ms`);
+      };
+      const onOk = () => {
+        if (!autoTune) return;
+        recentOk++;
+        if (recentOk >= 10 && activePace > delayMs) {
+          activePace = Math.max(delayMs, Math.floor(activePace * 0.75));
+          recentOk = 0;
+        }
+      };
 
       const work = async () => {
         while (true) {
           const i = cursor++;
           if (i >= total) return;
-          if (pacing > 0) await new Promise((r) => setTimeout(r, pacing));
+          const wait = Math.max(activePace, throttleUntil - Date.now());
+          if (wait > 0) await new Promise((r) => setTimeout(r, wait));
           try {
             const proxied = `${SUPABASE_URL}/functions/v1/anyflip-image?url=${encodeURIComponent(pages[i])}`;
             const r = await fetch(proxied, { headers: { Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY } });
@@ -105,23 +149,47 @@ const Index = () => {
 
             if (!r.ok) {
               const errBody = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-              updateDiag(i, {
-                status: "fail", proxyStatus: r.status, finalUrl, referer, attempts,
-                error: errBody.error || `HTTP ${r.status}`,
-              });
+              if (r.status === 403 || r.status === 429 || r.status === 503) {
+                onThrottle();
+                // retry once after backoff
+                await new Promise((res) => setTimeout(res, throttleUntil - Date.now()));
+                const r2 = await fetch(proxied, { headers: { Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY } });
+                if (r2.ok) {
+                  const blob = await r2.blob();
+                  decoded[i] = await imageBlobToJpeg(blob);
+                  updateDiag(i, { status: "ok", proxyStatus: r2.status, finalUrl: r2.headers.get("X-Anyflip-Final-Url") || undefined, referer, attempts });
+                  onOk();
+                } else {
+                  updateDiag(i, { status: "fail", proxyStatus: r2.status, finalUrl, referer, attempts, error: `Retry ${r2.status}` });
+                }
+              } else {
+                updateDiag(i, {
+                  status: "fail", proxyStatus: r.status, finalUrl, referer, attempts,
+                  error: errBody.error || `HTTP ${r.status}`,
+                });
+              }
             } else {
               const blob = await r.blob();
               decoded[i] = await imageBlobToJpeg(blob);
               updateDiag(i, { status: "ok", proxyStatus: r.status, finalUrl, referer, attempts });
+              onOk();
             }
           } catch (e) {
             updateDiag(i, { status: "fail", error: e instanceof Error ? e.message : String(e) });
           }
           done++;
           setProgress(Math.round((done / total) * 90));
+          // Honor reduced concurrency: if active workers exceed activeConc, exit early
+          if (cursor - done > activeConc) return;
         }
       };
-      await Promise.all(Array.from({ length: conc }, () => work()));
+      const startWorkers = Math.max(1, Math.min(8, concurrency));
+      // Spawn up to startWorkers; new workers replace exited ones until done
+      const spawn = async (): Promise<void> => {
+        await work();
+        if (done < total) return spawn();
+      };
+      await Promise.all(Array.from({ length: startWorkers }, () => spawn()));
 
       const failed = decoded.filter((p) => !p).length;
 
@@ -183,10 +251,28 @@ const Index = () => {
         <Card className="p-6 sm:p-8 space-y-5 border-0" style={{ boxShadow: "var(--shadow-card)" }}>
           <div className="space-y-2">
             <Label htmlFor="url">URL Buku AnyFlip</Label>
-            <Input id="url" type="url" placeholder="https://anyflip.com/abcd/efgh/" value={url}
-                   onChange={(e) => setUrl(e.target.value)} disabled={loading}
-                   onKeyDown={(e) => e.key === "Enter" && !loading && handleDownload()}
-                   className="h-12 text-base" />
+            <div className="flex gap-2">
+              <Input id="url" type="url" placeholder="https://anyflip.com/abcd/efgh/" value={url}
+                     onChange={(e) => { setUrl(e.target.value); setCanonical(null); }} disabled={loading}
+                     onKeyDown={(e) => e.key === "Enter" && !loading && handleDownload()}
+                     className="h-12 text-base flex-1" />
+              <Button type="button" variant="outline" onClick={handleResolve}
+                      disabled={loading || resolving} className="h-12">
+                {resolving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Resolve"}
+              </Button>
+            </div>
+            {canonical && (
+              <div className="text-xs p-2 rounded border bg-muted/40 space-y-1">
+                <div><span className="text-muted-foreground">Canonical:</span> <code className="break-all">{canonical.url}</code></div>
+                {canonical.chain.length > 1 && (
+                  <details><summary className="cursor-pointer text-muted-foreground">Redirect chain ({canonical.chain.length})</summary>
+                    <div className="mt-1 space-y-0.5 font-mono text-[10px] break-all">
+                      {canonical.chain.map((u, i) => <div key={i}>{i + 1}. {u}</div>)}
+                    </div>
+                  </details>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -203,6 +289,11 @@ const Index = () => {
                      disabled={loading} className="h-10" />
             </div>
           </div>
+
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={autoTune} onChange={(e) => setAutoTune(e.target.checked)} disabled={loading} />
+            <span>Auto-tune (backoff bila kena 403/429/503)</span>
+          </label>
 
           <Button onClick={handleDownload} disabled={loading}
                   className="w-full h-12 text-base font-semibold text-white border-0"
