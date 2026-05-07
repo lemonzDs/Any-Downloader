@@ -103,21 +103,42 @@ const Index = () => {
         const err = await metaRes.json().catch(() => ({ error: "Ralat" }));
         throw new Error(err.error || `HTTP ${metaRes.status}`);
       }
-      const { title, pages } = await metaRes.json() as { title: string; pages: string[] };
+      const { title, pages } = await metaRes.json() as { title: string; pages: string[]; canonicalUrl?: string };
       const total = pages.length;
       setStatus(`Memuat turun ${total} halaman...`);
       setDiags(pages.map((p, i) => ({ index: i, originalUrl: p, status: "pending" })));
 
       const decoded: ({ bytes: Uint8Array; w: number; h: number } | null)[] = new Array(total).fill(null);
       let cursor = 0, done = 0;
-      const conc = Math.max(1, Math.min(8, concurrency));
-      const pacing = Math.max(0, delayMs);
+      let activeConc = Math.max(1, Math.min(8, concurrency));
+      let activePace = Math.max(0, delayMs);
+      let throttleUntil = 0;
+      let recentOk = 0;
+
+      const onThrottle = () => {
+        if (!autoTune) return;
+        const backoff = Math.min(8000, 800 + activePace * 2);
+        throttleUntil = Date.now() + backoff;
+        activePace = Math.min(2000, Math.max(activePace * 2, 400));
+        activeConc = Math.max(1, activeConc - 1);
+        recentOk = 0;
+        setStatus(`Dikenakan throttle — backoff ${backoff}ms, conc=${activeConc}, delay=${activePace}ms`);
+      };
+      const onOk = () => {
+        if (!autoTune) return;
+        recentOk++;
+        if (recentOk >= 10 && activePace > delayMs) {
+          activePace = Math.max(delayMs, Math.floor(activePace * 0.75));
+          recentOk = 0;
+        }
+      };
 
       const work = async () => {
         while (true) {
           const i = cursor++;
           if (i >= total) return;
-          if (pacing > 0) await new Promise((r) => setTimeout(r, pacing));
+          const wait = Math.max(activePace, throttleUntil - Date.now());
+          if (wait > 0) await new Promise((r) => setTimeout(r, wait));
           try {
             const proxied = `${SUPABASE_URL}/functions/v1/anyflip-image?url=${encodeURIComponent(pages[i])}`;
             const r = await fetch(proxied, { headers: { Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY } });
@@ -128,23 +149,47 @@ const Index = () => {
 
             if (!r.ok) {
               const errBody = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-              updateDiag(i, {
-                status: "fail", proxyStatus: r.status, finalUrl, referer, attempts,
-                error: errBody.error || `HTTP ${r.status}`,
-              });
+              if (r.status === 403 || r.status === 429 || r.status === 503) {
+                onThrottle();
+                // retry once after backoff
+                await new Promise((res) => setTimeout(res, throttleUntil - Date.now()));
+                const r2 = await fetch(proxied, { headers: { Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY } });
+                if (r2.ok) {
+                  const blob = await r2.blob();
+                  decoded[i] = await imageBlobToJpeg(blob);
+                  updateDiag(i, { status: "ok", proxyStatus: r2.status, finalUrl: r2.headers.get("X-Anyflip-Final-Url") || undefined, referer, attempts });
+                  onOk();
+                } else {
+                  updateDiag(i, { status: "fail", proxyStatus: r2.status, finalUrl, referer, attempts, error: `Retry ${r2.status}` });
+                }
+              } else {
+                updateDiag(i, {
+                  status: "fail", proxyStatus: r.status, finalUrl, referer, attempts,
+                  error: errBody.error || `HTTP ${r.status}`,
+                });
+              }
             } else {
               const blob = await r.blob();
               decoded[i] = await imageBlobToJpeg(blob);
               updateDiag(i, { status: "ok", proxyStatus: r.status, finalUrl, referer, attempts });
+              onOk();
             }
           } catch (e) {
             updateDiag(i, { status: "fail", error: e instanceof Error ? e.message : String(e) });
           }
           done++;
           setProgress(Math.round((done / total) * 90));
+          // Honor reduced concurrency: if active workers exceed activeConc, exit early
+          if (cursor - done > activeConc) return;
         }
       };
-      await Promise.all(Array.from({ length: conc }, () => work()));
+      const startWorkers = Math.max(1, Math.min(8, concurrency));
+      // Spawn up to startWorkers; new workers replace exited ones until done
+      const spawn = async (): Promise<void> => {
+        await work();
+        if (done < total) return spawn();
+      };
+      await Promise.all(Array.from({ length: startWorkers }, () => spawn()));
 
       const failed = decoded.filter((p) => !p).length;
 
