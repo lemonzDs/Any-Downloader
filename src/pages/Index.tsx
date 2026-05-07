@@ -251,10 +251,28 @@ const Index = () => {
         <Card className="p-6 sm:p-8 space-y-5 border-0" style={{ boxShadow: "var(--shadow-card)" }}>
           <div className="space-y-2">
             <Label htmlFor="url">URL Buku AnyFlip</Label>
-            <Input id="url" type="url" placeholder="https://anyflip.com/abcd/efgh/" value={url}
-                   onChange={(e) => setUrl(e.target.value)} disabled={loading}
-                   onKeyDown={(e) => e.key === "Enter" && !loading && handleDownload()}
-                   className="h-12 text-base" />
+            <div className="flex gap-2">
+              <Input id="url" type="url" placeholder="https://anyflip.com/abcd/efgh/" value={url}
+                     onChange={(e) => { setUrl(e.target.value); setCanonical(null); }} disabled={loading}
+                     onKeyDown={(e) => e.key === "Enter" && !loading && handleDownload()}
+                     className="h-12 text-base flex-1" />
+              <Button type="button" variant="outline" onClick={handleResolve}
+                      disabled={loading || resolving} className="h-12">
+                {resolving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Resolve"}
+              </Button>
+            </div>
+            {canonical && (
+              <div className="text-xs p-2 rounded border bg-muted/40 space-y-1">
+                <div><span className="text-muted-foreground">Canonical:</span> <code className="break-all">{canonical.url}</code></div>
+                {canonical.chain.length > 1 && (
+                  <details><summary className="cursor-pointer text-muted-foreground">Redirect chain ({canonical.chain.length})</summary>
+                    <div className="mt-1 space-y-0.5 font-mono text-[10px] break-all">
+                      {canonical.chain.map((u, i) => <div key={i}>{i + 1}. {u}</div>)}
+                    </div>
+                  </details>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -271,6 +289,11 @@ const Index = () => {
                      disabled={loading} className="h-10" />
             </div>
           </div>
+
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={autoTune} onChange={(e) => setAutoTune(e.target.checked)} disabled={loading} />
+            <span>Auto-tune (backoff bila kena 403/429/503)</span>
+          </label>
 
           <Button onClick={handleDownload} disabled={loading}
                   className="w-full h-12 text-base font-semibold text-white border-0"
