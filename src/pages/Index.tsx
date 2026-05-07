@@ -48,6 +48,35 @@ async function imageBlobToJpeg(blob: Blob): Promise<{ bytes: Uint8Array; w: numb
   }
 }
 
+function downloadFile(content: string, filename: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function exportDiags(format: "json" | "csv", diags: PageDiag[], canonical?: string) {
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  if (format === "json") {
+    downloadFile(JSON.stringify({ canonical, generatedAt: new Date().toISOString(), pages: diags }, null, 2),
+      `anyflip-diagnostics-${ts}.json`, "application/json");
+    return;
+  }
+  const esc = (v: unknown) => {
+    const s = v == null ? "" : typeof v === "string" ? v : JSON.stringify(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = ["index", "status", "proxyStatus", "originalUrl", "canonical", "finalUrl", "referer", "error", "attempts"];
+  const rows = diags.map((d) => [
+    d.index + 1, d.status, d.proxyStatus ?? "", d.originalUrl, canonical ?? "",
+    d.finalUrl ?? "", d.referer ?? "", d.error ?? "",
+    d.attempts ? d.attempts.map((a) => `[${a.status}|${a.ms}ms] ${a.url}`).join(" | ") : "",
+  ].map(esc).join(","));
+  downloadFile([header.join(","), ...rows].join("\n"), `anyflip-diagnostics-${ts}.csv`, "text/csv");
+}
+
 const Index = () => {
   const [url, setUrl] = useState("");
   const [concurrency, setConcurrency] = useState(3);
