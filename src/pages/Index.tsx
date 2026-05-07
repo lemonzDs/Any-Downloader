@@ -52,11 +52,34 @@ const Index = () => {
   const [url, setUrl] = useState("");
   const [concurrency, setConcurrency] = useState(3);
   const [delayMs, setDelayMs] = useState(150);
+  const [autoTune, setAutoTune] = useState(true);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("");
   const [diags, setDiags] = useState<PageDiag[]>([]);
   const [diagOpen, setDiagOpen] = useState(false);
+  const [canonical, setCanonical] = useState<{ url: string; chain: string[] } | null>(null);
+  const [resolving, setResolving] = useState(false);
+
+  const handleResolve = async () => {
+    if (!url.trim()) { toast.error("Sila masukkan URL AnyFlip"); return; }
+    setResolving(true); setCanonical(null);
+    try {
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/anyflip-download`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY },
+        body: JSON.stringify({ url: url.trim(), resolveOnly: true }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      setCanonical({ url: data.canonicalUrl, chain: data.redirectChain || [] });
+      toast.success("URL dinormalkan");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setResolving(false);
+    }
+  };
 
   const updateDiag = (i: number, patch: Partial<PageDiag>) => {
     setDiags((prev) => {
