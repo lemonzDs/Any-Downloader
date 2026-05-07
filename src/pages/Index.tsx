@@ -313,7 +313,16 @@ const Index = () => {
                 </span>
                 <ChevronDown className={`w-4 h-4 transition ${diagOpen ? "rotate-180" : ""}`} />
               </CollapsibleTrigger>
-              <CollapsibleContent className="mt-3 space-y-2 max-h-80 overflow-y-auto">
+              <CollapsibleContent className="mt-3 space-y-2">
+                <div className="flex gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={() => exportDiags("json", diags, canonical?.url)}>
+                    Export JSON
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => exportDiags("csv", diags, canonical?.url)}>
+                    Export CSV
+                  </Button>
+                </div>
+                <div className="space-y-2 max-h-80 overflow-y-auto">
                 {diags.map((d) => (
                   <div key={d.index} className={`text-xs p-2 rounded border ${
                     d.status === "fail" ? "border-destructive/40 bg-destructive/5" :
@@ -342,6 +351,7 @@ const Index = () => {
                     )}
                   </div>
                 ))}
+                </div>
               </CollapsibleContent>
             </Collapsible>
           )}
