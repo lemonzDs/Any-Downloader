@@ -13,11 +13,14 @@ const UA =
 
 function tryExtractUserBook(parsed: URL): { userId: string; bookId: string } | null {
   if (!/(^|\.)anyflip\.com$/i.test(parsed.hostname)) return null;
-  const parts = parsed.pathname.split("/").filter(Boolean).filter((p) => {
-    if (/^(mobile|basic|index)(\.html?)?$/i.test(p)) return false;
-    if (/\.(html?|js|css|webp|jpe?g|png|gif)$/i.test(p)) return false;
+  // Strip query/hash entirely — canonical book URL never needs them
+  const cleanPath = parsed.pathname.replace(/\/+/g, "/");
+  const parts = cleanPath.split("/").filter(Boolean).filter((p) => {
+    if (/^(mobile|basic|index|flash|html5|pubs?|p|page|pages|view|read)(\.html?)?$/i.test(p)) return false;
+    if (/\.(html?|js|css|webp|jpe?g|png|gif|json)$/i.test(p)) return false;
     if (/^\d+$/.test(p)) return false;
-    if (/^files$/i.test(p) || /^(large|mobile|thumbnail)$/i.test(p)) return false;
+    if (/^files$/i.test(p) || /^(large|mobile|thumbnail|small|medium)$/i.test(p)) return false;
+    if (/^(javascript|css|images?|assets)$/i.test(p)) return false;
     return true;
   });
   if (parts.length < 2) return null;
