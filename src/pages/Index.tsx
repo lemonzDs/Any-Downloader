@@ -6,7 +6,7 @@ import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
-import { Download, BookOpen, Loader2, Sparkles, FileDown, ChevronDown, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Download, BookOpen, Loader2, ChevronDown, AlertCircle, CheckCircle2, Settings } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -89,6 +89,7 @@ const Index = () => {
   const [diagOpen, setDiagOpen] = useState(false);
   const [canonical, setCanonical] = useState<{ url: string; chain: string[] } | null>(null);
   const [resolving, setResolving] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const handleResolve = async () => {
     if (!url.trim()) { toast.error("Sila masukkan URL AnyFlip"); return; }
@@ -304,25 +305,34 @@ const Index = () => {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="conc" className="text-xs">Concurrency (1–8)</Label>
-              <Input id="conc" type="number" min={1} max={8} value={concurrency}
-                     onChange={(e) => setConcurrency(parseInt(e.target.value) || 1)}
-                     disabled={loading} className="h-10" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="delay" className="text-xs">Delay antara request (ms)</Label>
-              <Input id="delay" type="number" min={0} max={5000} step={50} value={delayMs}
-                     onChange={(e) => setDelayMs(parseInt(e.target.value) || 0)}
-                     disabled={loading} className="h-10" />
-            </div>
-          </div>
-
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="checkbox" checked={autoTune} onChange={(e) => setAutoTune(e.target.checked)} disabled={loading} />
-            <span>Auto-tune (backoff bila kena 403/429/503)</span>
-          </label>
+          <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
+            <CollapsibleTrigger className="flex items-center justify-between w-full text-sm py-2 px-3 rounded-md bg-muted hover:bg-muted/70 transition">
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <Settings className="w-4 h-4" /> Tetapan lanjut
+              </span>
+              <ChevronDown className={`w-4 h-4 transition ${settingsOpen ? "rotate-180" : ""}`} />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-3 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="conc" className="text-xs">Concurrency (1–8)</Label>
+                  <Input id="conc" type="number" min={1} max={8} value={concurrency}
+                         onChange={(e) => setConcurrency(parseInt(e.target.value) || 1)}
+                         disabled={loading} className="h-10" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="delay" className="text-xs">Delay antara request (ms)</Label>
+                  <Input id="delay" type="number" min={0} max={5000} step={50} value={delayMs}
+                         onChange={(e) => setDelayMs(parseInt(e.target.value) || 0)}
+                         disabled={loading} className="h-10" />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={autoTune} onChange={(e) => setAutoTune(e.target.checked)} disabled={loading} />
+                <span>Auto-tune (backoff bila kena 403/429/503)</span>
+              </label>
+            </CollapsibleContent>
+          </Collapsible>
 
           <Button onClick={handleDownload} disabled={loading}
                   className="w-full h-12 text-base font-semibold text-white border-0"
@@ -384,12 +394,6 @@ const Index = () => {
               </CollapsibleContent>
             </Collapsible>
           )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-            <Feature icon={<Sparkles className="w-4 h-4" />} text="Auto kesan halaman" />
-            <Feature icon={<FileDown className="w-4 h-4" />} text="PDF berkualiti tinggi" />
-            <Feature icon={<BookOpen className="w-4 h-4" />} text="Diagnostik penuh" />
-          </div>
         </Card>
 
         <div className="text-center text-xs text-muted-foreground">
@@ -399,11 +403,5 @@ const Index = () => {
     </main>
   );
 };
-
-const Feature = ({ icon, text }: { icon: React.ReactNode; text: string }) => (
-  <div className="flex items-center gap-2 text-sm text-muted-foreground justify-center sm:justify-start">
-    <span className="text-primary">{icon}</span><span>{text}</span>
-  </div>
-);
 
 export default Index;
