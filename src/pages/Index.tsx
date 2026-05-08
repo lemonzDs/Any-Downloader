@@ -89,6 +89,7 @@ const Index = () => {
   const [diagOpen, setDiagOpen] = useState(false);
   const [canonical, setCanonical] = useState<{ url: string; chain: string[] } | null>(null);
   const [resolving, setResolving] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const handleResolve = async () => {
     if (!url.trim()) { toast.error("Sila masukkan URL AnyFlip"); return; }
