@@ -6,7 +6,7 @@ import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
-import { Download, BookOpen, Loader2, Sparkles, FileDown, ChevronDown, AlertCircle, CheckCircle2, Settings } from "lucide-react";
+import { Download, BookOpen, Loader2, ChevronDown, AlertCircle, CheckCircle2, Settings } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
