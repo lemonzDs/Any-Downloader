@@ -394,12 +394,6 @@ const Index = () => {
               </CollapsibleContent>
             </Collapsible>
           )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-            <Feature icon={<Sparkles className="w-4 h-4" />} text="Auto kesan halaman" />
-            <Feature icon={<FileDown className="w-4 h-4" />} text="PDF berkualiti tinggi" />
-            <Feature icon={<BookOpen className="w-4 h-4" />} text="Diagnostik penuh" />
-          </div>
         </Card>
 
         <div className="text-center text-xs text-muted-foreground">
