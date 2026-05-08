@@ -305,25 +305,34 @@ const Index = () => {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="conc" className="text-xs">Concurrency (1–8)</Label>
-              <Input id="conc" type="number" min={1} max={8} value={concurrency}
-                     onChange={(e) => setConcurrency(parseInt(e.target.value) || 1)}
-                     disabled={loading} className="h-10" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="delay" className="text-xs">Delay antara request (ms)</Label>
-              <Input id="delay" type="number" min={0} max={5000} step={50} value={delayMs}
-                     onChange={(e) => setDelayMs(parseInt(e.target.value) || 0)}
-                     disabled={loading} className="h-10" />
-            </div>
-          </div>
-
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="checkbox" checked={autoTune} onChange={(e) => setAutoTune(e.target.checked)} disabled={loading} />
-            <span>Auto-tune (backoff bila kena 403/429/503)</span>
-          </label>
+          <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
+            <CollapsibleTrigger className="flex items-center justify-between w-full text-sm py-2 px-3 rounded-md bg-muted hover:bg-muted/70 transition">
+              <span className="flex items-center gap-2 text-muted-foreground">
+                <Settings className="w-4 h-4" /> Tetapan lanjut
+              </span>
+              <ChevronDown className={`w-4 h-4 transition ${settingsOpen ? "rotate-180" : ""}`} />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-3 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="conc" className="text-xs">Concurrency (1–8)</Label>
+                  <Input id="conc" type="number" min={1} max={8} value={concurrency}
+                         onChange={(e) => setConcurrency(parseInt(e.target.value) || 1)}
+                         disabled={loading} className="h-10" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="delay" className="text-xs">Delay antara request (ms)</Label>
+                  <Input id="delay" type="number" min={0} max={5000} step={50} value={delayMs}
+                         onChange={(e) => setDelayMs(parseInt(e.target.value) || 0)}
+                         disabled={loading} className="h-10" />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={autoTune} onChange={(e) => setAutoTune(e.target.checked)} disabled={loading} />
+                <span>Auto-tune (backoff bila kena 403/429/503)</span>
+              </label>
+            </CollapsibleContent>
+          </Collapsible>
 
           <Button onClick={handleDownload} disabled={loading}
                   className="w-full h-12 text-base font-semibold text-white border-0"
