@@ -404,10 +404,4 @@ const Index = () => {
   );
 };
 
-const Feature = ({ icon, text }: { icon: React.ReactNode; text: string }) => (
-  <div className="flex items-center gap-2 text-sm text-muted-foreground justify-center sm:justify-start">
-    <span className="text-primary">{icon}</span><span>{text}</span>
-  </div>
-);
-
 export default Index;
