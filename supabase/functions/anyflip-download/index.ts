@@ -50,6 +50,13 @@ async function resolveRedirects(rawUrl: string): Promise<{ finalUrl: string; cha
       try { await res.body?.cancel(); } catch { /* ignore */ }
       if (!loc) break;
       const next = new URL(loc, current).toString();
+      try {
+        const nextHost = new URL(next).hostname;
+        if (!/(^|\.)anyflip\.com$/i.test(nextHost)) {
+          chain.push(`${next} (blocked: host ${nextHost} not allowed)`);
+          break;
+        }
+      } catch { break; }
       chain.push(next);
       current = next;
       continue;
