@@ -72,7 +72,9 @@ async function resolveRedirects(rawUrl: string): Promise<{ finalUrl: string; cha
         const next = meta?.[1] || canonical?.[1] || ogUrl?.[1];
         if (next) {
           const abs = new URL(next, current).toString();
-          if (abs !== current) {
+          let absHost = "";
+          try { absHost = new URL(abs).hostname; } catch { /* ignore */ }
+          if (abs !== current && /(^|\.)anyflip\.com$/i.test(absHost)) {
             chain.push(abs);
             current = abs;
             continue;
