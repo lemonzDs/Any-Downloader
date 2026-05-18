@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
-import { Download, BookOpen, Loader2, ChevronDown, AlertCircle, CheckCircle2, Settings } from "lucide-react";
+import { Download, BookOpen, Loader2, ChevronDown, AlertCircle, CheckCircle2, Settings, Eye } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -21,6 +22,16 @@ interface PageDiag {
   referer?: string;
   attempts?: Array<{ url: string; status: number; ms: number; contentType: string | null }>;
   error?: string;
+}
+
+interface BookMeta {
+  title: string;
+  pages: string[];
+  canonicalUrl?: string;
+}
+
+function proxyUrl(pageUrl: string) {
+  return `${SUPABASE_URL}/functions/v1/anyflip-image?url=${encodeURIComponent(pageUrl)}`;
 }
 
 async function imageBlobToJpeg(blob: Blob): Promise<{ bytes: Uint8Array; w: number; h: number }> {
@@ -82,34 +93,51 @@ const Index = () => {
   const [concurrency, setConcurrency] = useState(3);
   const [delayMs, setDelayMs] = useState(150);
   const [autoTune, setAutoTune] = useState(true);
-  const [loading, setLoading] = useState(false);
+  const [loadingMeta, setLoadingMeta] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("");
   const [diags, setDiags] = useState<PageDiag[]>([]);
   const [diagOpen, setDiagOpen] = useState(false);
   const [canonical, setCanonical] = useState<{ url: string; chain: string[] } | null>(null);
-  const [resolving, setResolving] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [book, setBook] = useState<BookMeta | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  const handleResolve = async () => {
+  const loading = loadingMeta || downloading;
+
+  const handleLoad = async () => {
     if (!url.trim()) { toast.error("Sila masukkan URL AnyFlip"); return; }
-    setResolving(true); setCanonical(null);
+    setLoadingMeta(true); setBook(null); setSelected(new Set()); setDiags([]); setCanonical(null);
     try {
       const r = await fetch(`${SUPABASE_URL}/functions/v1/anyflip-download`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY },
-        body: JSON.stringify({ url: url.trim(), resolveOnly: true }),
+        body: JSON.stringify({ url: url.trim() }),
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-      setCanonical({ url: data.canonicalUrl, chain: data.redirectChain || [] });
-      toast.success("URL dinormalkan");
+      const meta: BookMeta = { title: data.title, pages: data.pages, canonicalUrl: data.canonicalUrl };
+      setBook(meta);
+      setSelected(new Set(meta.pages.map((_, i) => i)));
+      if (data.canonicalUrl) setCanonical({ url: data.canonicalUrl, chain: data.redirectChain || [] });
+      toast.success(`${meta.pages.length} halaman dijumpai — pilih untuk muat turun`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
-      setResolving(false);
+      setLoadingMeta(false);
     }
   };
+
+  const toggle = (i: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
+
+  const selectAll = () => book && setSelected(new Set(book.pages.map((_, i) => i)));
+  const selectNone = () => setSelected(new Set());
 
   const updateDiag = (i: number, patch: Partial<PageDiag>) => {
     setDiags((prev) => {
@@ -120,24 +148,16 @@ const Index = () => {
   };
 
   const handleDownload = async () => {
-    if (!url.trim()) { toast.error("Sila masukkan URL AnyFlip"); return; }
-    setLoading(true); setProgress(0); setStatus("Mengesan buku..."); setDiags([]); setDiagOpen(false);
+    if (!book) { toast.error("Muat buku dulu"); return; }
+    if (selected.size === 0) { toast.error("Pilih sekurang-kurangnya satu halaman"); return; }
+
+    setDownloading(true); setProgress(0); setDiagOpen(false);
+    const indices = Array.from(selected).sort((a, b) => a - b);
+    const total = indices.length;
+    setStatus(`Memuat turun ${total} halaman...`);
+    setDiags(indices.map((origIdx) => ({ index: origIdx, originalUrl: book.pages[origIdx], status: "pending" })));
 
     try {
-      const metaRes = await fetch(`${SUPABASE_URL}/functions/v1/anyflip-download`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY },
-        body: JSON.stringify({ url: url.trim() }),
-      });
-      if (!metaRes.ok) {
-        const err = await metaRes.json().catch(() => ({ error: "Ralat" }));
-        throw new Error(err.error || `HTTP ${metaRes.status}`);
-      }
-      const { title, pages } = await metaRes.json() as { title: string; pages: string[]; canonicalUrl?: string };
-      const total = pages.length;
-      setStatus(`Memuat turun ${total} halaman...`);
-      setDiags(pages.map((p, i) => ({ index: i, originalUrl: p, status: "pending" })));
-
       const decoded: ({ bytes: Uint8Array; w: number; h: number } | null)[] = new Array(total).fill(null);
       let cursor = 0, done = 0;
       let activeConc = Math.max(1, Math.min(8, concurrency));
@@ -152,7 +172,7 @@ const Index = () => {
         activePace = Math.min(2000, Math.max(activePace * 2, 400));
         activeConc = Math.max(1, activeConc - 1);
         recentOk = 0;
-        setStatus(`Dikenakan throttle — backoff ${backoff}ms, conc=${activeConc}, delay=${activePace}ms`);
+        setStatus(`Throttle — backoff ${backoff}ms, conc=${activeConc}, delay=${activePace}ms`);
       };
       const onOk = () => {
         if (!autoTune) return;
@@ -163,14 +183,18 @@ const Index = () => {
         }
       };
 
+      const diagSlot = (origIdx: number) => indices.indexOf(origIdx);
+
       const work = async () => {
         while (true) {
-          const i = cursor++;
-          if (i >= total) return;
+          const slot = cursor++;
+          if (slot >= total) return;
+          const origIdx = indices[slot];
+          const pageUrl = book.pages[origIdx];
           const wait = Math.max(activePace, throttleUntil - Date.now());
           if (wait > 0) await new Promise((r) => setTimeout(r, wait));
           try {
-            const proxied = `${SUPABASE_URL}/functions/v1/anyflip-image?url=${encodeURIComponent(pages[i])}`;
+            const proxied = proxyUrl(pageUrl);
             const r = await fetch(proxied, { headers: { Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY } });
             const finalUrl = r.headers.get("X-Anyflip-Final-Url") || undefined;
             const referer = r.headers.get("X-Anyflip-Referer") || undefined;
@@ -181,44 +205,35 @@ const Index = () => {
               const errBody = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
               if (r.status === 403 || r.status === 429 || r.status === 503) {
                 onThrottle();
-                // retry once after backoff
                 await new Promise((res) => setTimeout(res, throttleUntil - Date.now()));
                 const r2 = await fetch(proxied, { headers: { Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY } });
                 if (r2.ok) {
                   const blob = await r2.blob();
-                  decoded[i] = await imageBlobToJpeg(blob);
-                  updateDiag(i, { status: "ok", proxyStatus: r2.status, finalUrl: r2.headers.get("X-Anyflip-Final-Url") || undefined, referer, attempts });
+                  decoded[slot] = await imageBlobToJpeg(blob);
+                  updateDiag(diagSlot(origIdx), { status: "ok", proxyStatus: r2.status, finalUrl: r2.headers.get("X-Anyflip-Final-Url") || undefined, referer, attempts });
                   onOk();
                 } else {
-                  updateDiag(i, { status: "fail", proxyStatus: r2.status, finalUrl, referer, attempts, error: `Retry ${r2.status}` });
+                  updateDiag(diagSlot(origIdx), { status: "fail", proxyStatus: r2.status, finalUrl, referer, attempts, error: `Retry ${r2.status}` });
                 }
               } else {
-                updateDiag(i, {
-                  status: "fail", proxyStatus: r.status, finalUrl, referer, attempts,
-                  error: errBody.error || `HTTP ${r.status}`,
-                });
+                updateDiag(diagSlot(origIdx), { status: "fail", proxyStatus: r.status, finalUrl, referer, attempts, error: errBody.error || `HTTP ${r.status}` });
               }
             } else {
               const blob = await r.blob();
-              decoded[i] = await imageBlobToJpeg(blob);
-              updateDiag(i, { status: "ok", proxyStatus: r.status, finalUrl, referer, attempts });
+              decoded[slot] = await imageBlobToJpeg(blob);
+              updateDiag(diagSlot(origIdx), { status: "ok", proxyStatus: r.status, finalUrl, referer, attempts });
               onOk();
             }
           } catch (e) {
-            updateDiag(i, { status: "fail", error: e instanceof Error ? e.message : String(e) });
+            updateDiag(diagSlot(origIdx), { status: "fail", error: e instanceof Error ? e.message : String(e) });
           }
           done++;
           setProgress(Math.round((done / total) * 90));
-          // Honor reduced concurrency: if active workers exceed activeConc, exit early
           if (cursor - done > activeConc) return;
         }
       };
       const startWorkers = Math.max(1, Math.min(8, concurrency));
-      // Spawn up to startWorkers; new workers replace exited ones until done
-      const spawn = async (): Promise<void> => {
-        await work();
-        if (done < total) return spawn();
-      };
+      const spawn = async (): Promise<void> => { await work(); if (done < total) return spawn(); };
       await Promise.all(Array.from({ length: startWorkers }, () => spawn()));
 
       const failed = decoded.filter((p) => !p).length;
@@ -238,23 +253,20 @@ const Index = () => {
       const blob = new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = `${title}.pdf`;
+      const suffix = total === book.pages.length ? "" : `-${total}pages`;
+      link.download = `${book.title}${suffix}.pdf`;
       link.click();
       URL.revokeObjectURL(link.href);
 
-      if (failed > 0) {
-        toast.warning(`Siap dengan ${failed} halaman gagal — buka panel diagnostik`);
-        setDiagOpen(true);
-      } else {
-        toast.success(`Siap! ${total} halaman`);
-      }
+      if (failed > 0) { toast.warning(`Siap dengan ${failed} halaman gagal`); setDiagOpen(true); }
+      else toast.success(`Siap! ${total} halaman`);
       setStatus("");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
       setStatus("");
       setDiagOpen(true);
     } finally {
-      setLoading(false);
+      setDownloading(false);
       setTimeout(() => setProgress(0), 1500);
     }
   };
@@ -262,9 +274,11 @@ const Index = () => {
   const failedCount = diags.filter((d) => d.status === "fail").length;
   const okCount = diags.filter((d) => d.status === "ok").length;
 
+  const allSelected = useMemo(() => book ? selected.size === book.pages.length : false, [book, selected]);
+
   return (
     <main className="min-h-screen flex items-center justify-center p-4 sm:p-6">
-      <div className="w-full max-w-2xl space-y-8">
+      <div className="w-full max-w-3xl space-y-8">
         <header className="text-center space-y-4">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl text-white"
                style={{ background: "var(--gradient-primary)", boxShadow: "var(--shadow-glow)" }}>
@@ -274,7 +288,7 @@ const Index = () => {
             AnyFlip <span className="bg-clip-text text-transparent" style={{ backgroundImage: "var(--gradient-primary)" }}>Downloader</span>
           </h1>
           <p className="text-muted-foreground text-base sm:text-lg">
-            Tukar mana-mana buku AnyFlip kepada PDF dengan satu klik.
+            Preview halaman, pilih yang anda mahu, kemudian muat turun sebagai PDF.
           </p>
         </header>
 
@@ -283,24 +297,17 @@ const Index = () => {
             <Label htmlFor="url">URL Buku AnyFlip</Label>
             <div className="flex gap-2">
               <Input id="url" type="url" placeholder="https://anyflip.com/abcd/efgh/" value={url}
-                     onChange={(e) => { setUrl(e.target.value); setCanonical(null); }} disabled={loading}
-                     onKeyDown={(e) => e.key === "Enter" && !loading && handleDownload()}
+                     onChange={(e) => { setUrl(e.target.value); setBook(null); setCanonical(null); }}
+                     disabled={loading}
+                     onKeyDown={(e) => e.key === "Enter" && !loading && handleLoad()}
                      className="h-12 text-base flex-1" />
-              <Button type="button" variant="outline" onClick={handleResolve}
-                      disabled={loading || resolving} className="h-12">
-                {resolving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Resolve"}
+              <Button type="button" onClick={handleLoad} disabled={loading} className="h-12 px-6">
+                {loadingMeta ? <Loader2 className="w-4 h-4 animate-spin" /> : (<><Eye className="w-4 h-4 mr-2" /> Preview</>)}
               </Button>
             </div>
             {canonical && (
-              <div className="text-xs p-2 rounded border bg-muted/40 space-y-1">
-                <div><span className="text-muted-foreground">Canonical:</span> <code className="break-all">{canonical.url}</code></div>
-                {canonical.chain.length > 1 && (
-                  <details><summary className="cursor-pointer text-muted-foreground">Redirect chain ({canonical.chain.length})</summary>
-                    <div className="mt-1 space-y-0.5 font-mono text-[10px] break-all">
-                      {canonical.chain.map((u, i) => <div key={i}>{i + 1}. {u}</div>)}
-                    </div>
-                  </details>
-                )}
+              <div className="text-xs text-muted-foreground break-all">
+                <code>{canonical.url}</code>
               </div>
             )}
           </div>
@@ -334,11 +341,54 @@ const Index = () => {
             </CollapsibleContent>
           </Collapsible>
 
-          <Button onClick={handleDownload} disabled={loading}
+          {book && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="text-sm font-medium truncate">
+                  {book.title} <span className="text-muted-foreground font-normal">— {book.pages.length} halaman</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-muted-foreground">{selected.size} dipilih</span>
+                  <Button size="sm" variant="ghost" onClick={selectAll} disabled={downloading || allSelected}>Pilih semua</Button>
+                  <Button size="sm" variant="ghost" onClick={selectNone} disabled={downloading || selected.size === 0}>Kosongkan</Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 max-h-[420px] overflow-y-auto p-1 rounded-md border bg-muted/20">
+                {book.pages.map((p, i) => {
+                  const isSel = selected.has(i);
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => !downloading && toggle(i)}
+                      disabled={downloading}
+                      className={`group relative aspect-[3/4] rounded-md overflow-hidden border-2 transition bg-background ${
+                        isSel ? "border-primary ring-2 ring-primary/30" : "border-border hover:border-primary/50"
+                      } ${downloading ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
+                    >
+                      <img src={proxyUrl(p)} alt={`Halaman ${i + 1}`} loading="lazy"
+                           className="w-full h-full object-cover" />
+                      <div className="absolute top-1 left-1">
+                        <Checkbox checked={isSel} className="bg-background/90 border-2" tabIndex={-1} />
+                      </div>
+                      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1 text-[10px] font-medium text-white text-center">
+                        {i + 1}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <Button onClick={handleDownload} disabled={loading || !book || selected.size === 0}
                   className="w-full h-12 text-base font-semibold text-white border-0"
                   style={{ background: "var(--gradient-primary)", boxShadow: "var(--shadow-glow)" }}>
-            {loading ? (<><Loader2 className="w-5 h-5 mr-2 animate-spin" /> {status || "Memproses..."}</>)
-                     : (<><Download className="w-5 h-5 mr-2" /> Muat Turun PDF</>)}
+            {downloading ? (<><Loader2 className="w-5 h-5 mr-2 animate-spin" /> {status || "Memproses..."}</>)
+                         : (<><Download className="w-5 h-5 mr-2" /> {book
+                            ? (allSelected ? `Muat Turun Semua (${book.pages.length})` : `Muat Turun ${selected.size} Halaman`)
+                            : "Muat Turun PDF"}</>)}
           </Button>
 
           {progress > 0 && <Progress value={progress} className="h-2" />}
