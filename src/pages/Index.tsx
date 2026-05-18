@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -7,11 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from "sonner";
-import { Download, BookOpen, Loader2, ChevronDown, AlertCircle, CheckCircle2, Settings, Eye } from "lucide-react";
+import { Download, BookOpen, Loader2, ChevronDown, AlertCircle, CheckCircle2, Settings, Eye, RefreshCw, RotateCcw } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const STORAGE_PREFIX = "anyflip:selected:";
 
 interface PageDiag {
   index: number;
@@ -30,8 +31,25 @@ interface BookMeta {
   canonicalUrl?: string;
 }
 
-function proxyUrl(pageUrl: string) {
-  return `${SUPABASE_URL}/functions/v1/anyflip-image?url=${encodeURIComponent(pageUrl)}`;
+function proxyUrl(pageUrl: string, bust = 0) {
+  const base = `${SUPABASE_URL}/functions/v1/anyflip-image?url=${encodeURIComponent(pageUrl)}`;
+  return bust ? `${base}&_b=${bust}` : base;
+}
+
+// Parse "1-5, 10-12, 20" (1-indexed). Returns 0-indexed Set within [0, max).
+function parseRanges(input: string, max: number): { ok: number[]; bad: string[] } {
+  const ok = new Set<number>();
+  const bad: string[] = [];
+  for (const raw of input.split(/[,\s]+/).filter(Boolean)) {
+    const m = raw.match(/^(\d+)(?:-(\d+))?$/);
+    if (!m) { bad.push(raw); continue; }
+    const a = parseInt(m[1], 10);
+    const b = m[2] ? parseInt(m[2], 10) : a;
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    if (lo < 1 || hi > max) { bad.push(raw); continue; }
+    for (let i = lo; i <= hi; i++) ok.add(i - 1);
+  }
+  return { ok: Array.from(ok).sort((a, b) => a - b), bad };
 }
 
 async function imageBlobToJpeg(blob: Blob): Promise<{ bytes: Uint8Array; w: number; h: number }> {
@@ -103,12 +121,24 @@ const Index = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [book, setBook] = useState<BookMeta | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [thumbBust, setThumbBust] = useState(0);
+  const [rangeInput, setRangeInput] = useState("");
+  const persistKeyRef = useRef<string | null>(null);
 
   const loading = loadingMeta || downloading;
+
+  // Persist selection per canonical URL
+  useEffect(() => {
+    if (!persistKeyRef.current || !book) return;
+    try {
+      localStorage.setItem(persistKeyRef.current, JSON.stringify(Array.from(selected).sort((a, b) => a - b)));
+    } catch { /* ignore quota */ }
+  }, [selected, book]);
 
   const handleLoad = async () => {
     if (!url.trim()) { toast.error("Sila masukkan URL AnyFlip"); return; }
     setLoadingMeta(true); setBook(null); setSelected(new Set()); setDiags([]); setCanonical(null);
+    persistKeyRef.current = null;
     try {
       const r = await fetch(`${SUPABASE_URL}/functions/v1/anyflip-download`, {
         method: "POST",
@@ -119,9 +149,26 @@ const Index = () => {
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       const meta: BookMeta = { title: data.title, pages: data.pages, canonicalUrl: data.canonicalUrl };
       setBook(meta);
-      setSelected(new Set(meta.pages.map((_, i) => i)));
       if (data.canonicalUrl) setCanonical({ url: data.canonicalUrl, chain: data.redirectChain || [] });
-      toast.success(`${meta.pages.length} halaman dijumpai — pilih untuk muat turun`);
+
+      // Restore saved selection (keyed by canonical URL, else by input URL)
+      const key = STORAGE_PREFIX + (data.canonicalUrl || url.trim());
+      persistKeyRef.current = key;
+      let restored: number[] | null = null;
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr)) restored = arr.filter((n: unknown) => typeof n === "number" && n >= 0 && n < meta.pages.length);
+        }
+      } catch { /* ignore */ }
+      if (restored && restored.length > 0) {
+        setSelected(new Set(restored));
+        toast.success(`${meta.pages.length} halaman — pilihan tersimpan dipulihkan (${restored.length})`);
+      } else {
+        setSelected(new Set(meta.pages.map((_, i) => i)));
+        toast.success(`${meta.pages.length} halaman dijumpai — pilih untuk muat turun`);
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -139,6 +186,21 @@ const Index = () => {
   const selectAll = () => book && setSelected(new Set(book.pages.map((_, i) => i)));
   const selectNone = () => setSelected(new Set());
 
+  const reloadThumbnails = () => {
+    setThumbBust(Date.now());
+    toast.success("Memuat semula thumbnail...");
+  };
+
+  const applyRange = () => {
+    if (!book) return;
+    if (!rangeInput.trim()) { toast.error("Masukkan julat (cth: 1-5, 10-12)"); return; }
+    const { ok, bad } = parseRanges(rangeInput, book.pages.length);
+    if (bad.length) toast.warning(`Diabaikan: ${bad.join(", ")}`);
+    if (ok.length === 0) { toast.error("Tiada halaman sah dari julat"); return; }
+    setSelected(new Set(ok));
+    toast.success(`${ok.length} halaman dipilih dari julat`);
+  };
+
   const updateDiag = (i: number, patch: Partial<PageDiag>) => {
     setDiags((prev) => {
       const next = [...prev];
@@ -147,12 +209,24 @@ const Index = () => {
     });
   };
 
-  const handleDownload = async () => {
+  const failedIndices = useMemo(
+    () => diags.filter((d) => d.status === "fail").map((d) => d.index),
+    [diags],
+  );
+  const failedSet = useMemo(() => new Set(failedIndices), [failedIndices]);
+
+  const selectOnlyFailed = () => {
+    if (failedIndices.length === 0) { toast.info("Tiada halaman gagal"); return; }
+    setSelected(new Set(failedIndices));
+    toast.success(`${failedIndices.length} halaman gagal dipilih`);
+  };
+
+  const runDownload = async (targetIndices: number[]) => {
     if (!book) { toast.error("Muat buku dulu"); return; }
-    if (selected.size === 0) { toast.error("Pilih sekurang-kurangnya satu halaman"); return; }
+    if (targetIndices.length === 0) { toast.error("Tiada halaman untuk dimuat turun"); return; }
 
     setDownloading(true); setProgress(0); setDiagOpen(false);
-    const indices = Array.from(selected).sort((a, b) => a - b);
+    const indices = [...targetIndices].sort((a, b) => a - b);
     const total = indices.length;
     setStatus(`Memuat turun ${total} halaman...`);
     setDiags(indices.map((origIdx) => ({ index: origIdx, originalUrl: book.pages[origIdx], status: "pending" })));
@@ -258,7 +332,7 @@ const Index = () => {
       link.click();
       URL.revokeObjectURL(link.href);
 
-      if (failed > 0) { toast.warning(`Siap dengan ${failed} halaman gagal`); setDiagOpen(true); }
+      if (failed > 0) { toast.warning(`Siap dengan ${failed} halaman gagal — thumbnail ditanda merah`); setDiagOpen(true); }
       else toast.success(`Siap! ${total} halaman`);
       setStatus("");
     } catch (e) {
@@ -271,7 +345,13 @@ const Index = () => {
     }
   };
 
-  const failedCount = diags.filter((d) => d.status === "fail").length;
+  const handleDownload = () => runDownload(Array.from(selected));
+  const retryFailed = () => {
+    if (failedIndices.length === 0) { toast.info("Tiada halaman gagal"); return; }
+    runDownload(failedIndices);
+  };
+
+  const failedCount = failedIndices.length;
   const okCount = diags.filter((d) => d.status === "ok").length;
 
   const allSelected = useMemo(() => book ? selected.size === book.pages.length : false, [book, selected]);
@@ -347,16 +427,51 @@ const Index = () => {
                 <div className="text-sm font-medium truncate">
                   {book.title} <span className="text-muted-foreground font-normal">— {book.pages.length} halaman</span>
                 </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-muted-foreground">{selected.size} dipilih</span>
-                  <Button size="sm" variant="ghost" onClick={selectAll} disabled={downloading || allSelected}>Pilih semua</Button>
+                <div className="flex items-center gap-1 text-xs flex-wrap">
+                  <span className="text-muted-foreground mr-1">{selected.size} dipilih</span>
+                  <Button size="sm" variant="ghost" onClick={selectAll} disabled={downloading || allSelected}>Semua</Button>
                   <Button size="sm" variant="ghost" onClick={selectNone} disabled={downloading || selected.size === 0}>Kosongkan</Button>
+                  <Button size="sm" variant="ghost" onClick={reloadThumbnails} disabled={downloading} title="Muat semula thumbnail">
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </Button>
                 </div>
               </div>
+
+              <div className="flex gap-2">
+                <Input
+                  type="text"
+                  placeholder="Julat halaman: 1-5, 10-12, 20"
+                  value={rangeInput}
+                  onChange={(e) => setRangeInput(e.target.value)}
+                  disabled={downloading}
+                  onKeyDown={(e) => e.key === "Enter" && !downloading && applyRange()}
+                  className="h-9 text-sm flex-1"
+                />
+                <Button size="sm" variant="outline" onClick={applyRange} disabled={downloading} className="h-9">
+                  Pilih julat
+                </Button>
+              </div>
+
+              {failedCount > 0 && (
+                <div className="flex items-center justify-between gap-2 p-2 rounded-md border border-destructive/40 bg-destructive/5 text-xs">
+                  <span className="flex items-center gap-1.5 text-destructive font-medium">
+                    <AlertCircle className="w-3.5 h-3.5" /> {failedCount} halaman gagal pada percubaan lalu
+                  </span>
+                  <div className="flex gap-1">
+                    <Button size="sm" variant="ghost" onClick={selectOnlyFailed} disabled={downloading} className="h-7 text-xs">
+                      Pilih sahaja
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={retryFailed} disabled={downloading} className="h-7 text-xs">
+                      <RotateCcw className="w-3 h-3 mr-1" /> Cuba semula
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 max-h-[420px] overflow-y-auto p-1 rounded-md border bg-muted/20">
                 {book.pages.map((p, i) => {
                   const isSel = selected.has(i);
+                  const isFail = failedSet.has(i);
                   return (
                     <button
                       key={i}
@@ -364,14 +479,21 @@ const Index = () => {
                       onClick={() => !downloading && toggle(i)}
                       disabled={downloading}
                       className={`group relative aspect-[3/4] rounded-md overflow-hidden border-2 transition bg-background ${
-                        isSel ? "border-primary ring-2 ring-primary/30" : "border-border hover:border-primary/50"
+                        isFail ? "border-destructive ring-2 ring-destructive/40"
+                          : isSel ? "border-primary ring-2 ring-primary/30"
+                          : "border-border hover:border-primary/50"
                       } ${downloading ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
                     >
-                      <img src={proxyUrl(p)} alt={`Halaman ${i + 1}`} loading="lazy"
+                      <img src={proxyUrl(p, thumbBust)} alt={`Halaman ${i + 1}`} loading="lazy"
                            className="w-full h-full object-cover" />
                       <div className="absolute top-1 left-1">
                         <Checkbox checked={isSel} className="bg-background/90 border-2" tabIndex={-1} />
                       </div>
+                      {isFail && (
+                        <div className="absolute top-1 right-1 bg-destructive text-destructive-foreground rounded-full p-0.5 shadow">
+                          <AlertCircle className="w-3 h-3" />
+                        </div>
+                      )}
                       <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1 text-[10px] font-medium text-white text-center">
                         {i + 1}
                       </div>
@@ -403,13 +525,18 @@ const Index = () => {
                 <ChevronDown className={`w-4 h-4 transition ${diagOpen ? "rotate-180" : ""}`} />
               </CollapsibleTrigger>
               <CollapsibleContent className="mt-3 space-y-2">
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <Button type="button" size="sm" variant="outline" onClick={() => exportDiags("json", diags, canonical?.url)}>
                     Export JSON
                   </Button>
                   <Button type="button" size="sm" variant="outline" onClick={() => exportDiags("csv", diags, canonical?.url)}>
                     Export CSV
                   </Button>
+                  {failedCount > 0 && (
+                    <Button type="button" size="sm" variant="outline" onClick={retryFailed} disabled={downloading}>
+                      <RotateCcw className="w-3.5 h-3.5 mr-1" /> Cuba semula {failedCount} gagal
+                    </Button>
+                  )}
                 </div>
                 <div className="space-y-2 max-h-80 overflow-y-auto">
                 {diags.map((d) => (
