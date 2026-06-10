@@ -621,7 +621,7 @@ const Index = () => {
         </Card>
 
         <div className="text-center text-xs text-muted-foreground">
-          Tampal URL daripada bar alamat AnyFlip (cth: <code className="px-1.5 py-0.5 rounded bg-muted">anyflip.com/xxx/yyy/</code>)
+          {SOURCE_META[source].hint}
         </div>
       </div>
     </main>
