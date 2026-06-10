@@ -53,8 +53,8 @@ interface BookMeta {
   canonicalUrl?: string;
 }
 
-function proxyUrl(pageUrl: string, bust = 0) {
-  const base = `${SUPABASE_URL}/functions/v1/anyflip-image?url=${encodeURIComponent(pageUrl)}`;
+function proxyUrl(source: Source, pageUrl: string, bust = 0) {
+  const base = `${SUPABASE_URL}/functions/v1/${SOURCE_META[source].imageFn}?url=${encodeURIComponent(pageUrl)}`;
   return bust ? `${base}&_b=${bust}` : base;
 }
 
