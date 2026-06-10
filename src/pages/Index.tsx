@@ -386,23 +386,43 @@ const Index = () => {
     <main className="min-h-screen flex items-center justify-center p-4 sm:p-6">
       <div className="w-full max-w-3xl space-y-8">
         <header className="text-center space-y-4">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl text-white"
-               style={{ background: "var(--gradient-primary)", boxShadow: "var(--shadow-glow)" }}>
-            <BookOpen className="w-8 h-8" />
+          <div className="inline-flex items-center justify-center gap-2">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl text-white"
+                 style={{ background: "var(--gradient-primary)", boxShadow: "var(--shadow-glow)" }}>
+              <BookOpen className="w-7 h-7" />
+            </div>
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl text-white"
+                 style={{ background: "var(--gradient-primary)", boxShadow: "var(--shadow-glow)" }}>
+              <Presentation className="w-7 h-7" />
+            </div>
           </div>
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">
-            AnyFlip <span className="bg-clip-text text-transparent" style={{ backgroundImage: "var(--gradient-primary)" }}>Downloader</span>
+            Deck <span className="bg-clip-text text-transparent" style={{ backgroundImage: "var(--gradient-primary)" }}>Downloader</span>
           </h1>
           <p className="text-muted-foreground text-base sm:text-lg">
-            Preview halaman, pilih yang anda mahu, kemudian muat turun sebagai PDF.
+            Muat turun buku <strong>AnyFlip</strong> & pembentangan <strong>SlideShare</strong> sebagai PDF.
           </p>
         </header>
 
         <Card className="p-6 sm:p-8 space-y-5 border-0" style={{ boxShadow: "var(--shadow-card)" }}>
+          <Tabs value={source} onValueChange={(v) => {
+            setSource(v as Source);
+            setBook(null); setCanonical(null); setDiags([]); setSelected(new Set()); setUrl("");
+          }}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="anyflip" disabled={loading}>
+                <BookOpen className="w-4 h-4 mr-2" /> AnyFlip
+              </TabsTrigger>
+              <TabsTrigger value="slideshare" disabled={loading}>
+                <Presentation className="w-4 h-4 mr-2" /> SlideShare
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
           <div className="space-y-2">
-            <Label htmlFor="url">URL Buku AnyFlip</Label>
+            <Label htmlFor="url">URL {SOURCE_META[source].label}</Label>
             <div className="flex gap-2">
-              <Input id="url" type="url" placeholder="https://anyflip.com/abcd/efgh/" value={url}
+              <Input id="url" type="url" placeholder={SOURCE_META[source].placeholder} value={url}
                      onChange={(e) => { setUrl(e.target.value); setBook(null); setCanonical(null); }}
                      disabled={loading}
                      onKeyDown={(e) => e.key === "Enter" && !loading && handleLoad()}
@@ -417,6 +437,7 @@ const Index = () => {
               </div>
             )}
           </div>
+
 
           <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
             <CollapsibleTrigger className="flex items-center justify-between w-full text-sm py-2 px-3 rounded-md bg-muted hover:bg-muted/70 transition">
