@@ -6,13 +6,35 @@ import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Download, BookOpen, Loader2, ChevronDown, AlertCircle, CheckCircle2, Settings, Eye, RefreshCw, RotateCcw } from "lucide-react";
+import { Download, BookOpen, Presentation, Loader2, ChevronDown, AlertCircle, CheckCircle2, Settings, Eye, RefreshCw, RotateCcw } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-const STORAGE_PREFIX = "anyflip:selected:";
+const STORAGE_PREFIX = "deck:selected:";
+
+type Source = "anyflip" | "slideshare";
+
+const SOURCE_META: Record<Source, {
+  label: string; placeholder: string; metaFn: string; imageFn: string; hint: string;
+}> = {
+  anyflip: {
+    label: "AnyFlip",
+    placeholder: "https://anyflip.com/abcd/efgh/",
+    metaFn: "anyflip-download",
+    imageFn: "anyflip-image",
+    hint: "Tampal URL daripada bar alamat AnyFlip (cth: anyflip.com/xxx/yyy/)",
+  },
+  slideshare: {
+    label: "SlideShare",
+    placeholder: "https://www.slideshare.net/slideshow/your-deck/123456",
+    metaFn: "slideshare-download",
+    imageFn: "slideshare-image",
+    hint: "Tampal URL pembentangan SlideShare (cth: slideshare.net/slideshow/...)",
+  },
+};
 
 interface PageDiag {
   index: number;
