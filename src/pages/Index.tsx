@@ -159,11 +159,11 @@ const Index = () => {
   }, [selected, book]);
 
   const handleLoad = async () => {
-    if (!url.trim()) { toast.error("Sila masukkan URL AnyFlip"); return; }
+    if (!url.trim()) { toast.error(`Sila masukkan URL ${SOURCE_META[source].label}`); return; }
     setLoadingMeta(true); setBook(null); setSelected(new Set()); setDiags([]); setCanonical(null);
     persistKeyRef.current = null;
     try {
-      const r = await fetch(`${SUPABASE_URL}/functions/v1/anyflip-download`, {
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/${SOURCE_META[source].metaFn}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY },
         body: JSON.stringify({ url: url.trim() }),
