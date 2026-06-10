@@ -291,11 +291,14 @@ const Index = () => {
           const wait = Math.max(activePace, throttleUntil - Date.now());
           if (wait > 0) await new Promise((r) => setTimeout(r, wait));
           try {
-            const proxied = proxyUrl(pageUrl);
+            const proxied = proxyUrl(source, pageUrl);
+            const finalHdr = source === "anyflip" ? "X-Anyflip-Final-Url" : "X-Slideshare-Final-Url";
+            const refHdr = source === "anyflip" ? "X-Anyflip-Referer" : "X-Slideshare-Referer";
+            const attHdr = source === "anyflip" ? "X-Anyflip-Attempts" : "X-Slideshare-Attempts";
             const r = await fetch(proxied, { headers: { Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY } });
-            const finalUrl = r.headers.get("X-Anyflip-Final-Url") || undefined;
-            const referer = r.headers.get("X-Anyflip-Referer") || undefined;
-            const attemptsRaw = r.headers.get("X-Anyflip-Attempts");
+            const finalUrl = r.headers.get(finalHdr) || undefined;
+            const referer = r.headers.get(refHdr) || undefined;
+            const attemptsRaw = r.headers.get(attHdr);
             const attempts = attemptsRaw ? JSON.parse(attemptsRaw) : undefined;
 
             if (!r.ok) {
@@ -307,7 +310,7 @@ const Index = () => {
                 if (r2.ok) {
                   const blob = await r2.blob();
                   decoded[slot] = await imageBlobToJpeg(blob);
-                  updateDiag(diagSlot(origIdx), { status: "ok", proxyStatus: r2.status, finalUrl: r2.headers.get("X-Anyflip-Final-Url") || undefined, referer, attempts });
+                  updateDiag(diagSlot(origIdx), { status: "ok", proxyStatus: r2.status, finalUrl: r2.headers.get(finalHdr) || undefined, referer, attempts });
                   onOk();
                 } else {
                   updateDiag(diagSlot(origIdx), { status: "fail", proxyStatus: r2.status, finalUrl, referer, attempts, error: `Retry ${r2.status}` });
