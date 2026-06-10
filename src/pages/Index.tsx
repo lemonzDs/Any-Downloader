@@ -6,13 +6,35 @@ import { Progress } from "@/components/ui/progress";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Download, BookOpen, Loader2, ChevronDown, AlertCircle, CheckCircle2, Settings, Eye, RefreshCw, RotateCcw } from "lucide-react";
+import { Download, BookOpen, Presentation, Loader2, ChevronDown, AlertCircle, CheckCircle2, Settings, Eye, RefreshCw, RotateCcw } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-const STORAGE_PREFIX = "anyflip:selected:";
+const STORAGE_PREFIX = "deck:selected:";
+
+type Source = "anyflip" | "slideshare";
+
+const SOURCE_META: Record<Source, {
+  label: string; placeholder: string; metaFn: string; imageFn: string; hint: string;
+}> = {
+  anyflip: {
+    label: "AnyFlip",
+    placeholder: "https://anyflip.com/abcd/efgh/",
+    metaFn: "anyflip-download",
+    imageFn: "anyflip-image",
+    hint: "Tampal URL daripada bar alamat AnyFlip (cth: anyflip.com/xxx/yyy/)",
+  },
+  slideshare: {
+    label: "SlideShare",
+    placeholder: "https://www.slideshare.net/slideshow/your-deck/123456",
+    metaFn: "slideshare-download",
+    imageFn: "slideshare-image",
+    hint: "Tampal URL pembentangan SlideShare (cth: slideshare.net/slideshow/...)",
+  },
+};
 
 interface PageDiag {
   index: number;
@@ -31,8 +53,8 @@ interface BookMeta {
   canonicalUrl?: string;
 }
 
-function proxyUrl(pageUrl: string, bust = 0) {
-  const base = `${SUPABASE_URL}/functions/v1/anyflip-image?url=${encodeURIComponent(pageUrl)}`;
+function proxyUrl(source: Source, pageUrl: string, bust = 0) {
+  const base = `${SUPABASE_URL}/functions/v1/${SOURCE_META[source].imageFn}?url=${encodeURIComponent(pageUrl)}`;
   return bust ? `${base}&_b=${bust}` : base;
 }
 
@@ -107,6 +129,7 @@ function exportDiags(format: "json" | "csv", diags: PageDiag[], canonical?: stri
 }
 
 const Index = () => {
+  const [source, setSource] = useState<Source>("anyflip");
   const [url, setUrl] = useState("");
   const [concurrency, setConcurrency] = useState(3);
   const [delayMs, setDelayMs] = useState(150);
@@ -136,11 +159,11 @@ const Index = () => {
   }, [selected, book]);
 
   const handleLoad = async () => {
-    if (!url.trim()) { toast.error("Sila masukkan URL AnyFlip"); return; }
+    if (!url.trim()) { toast.error(`Sila masukkan URL ${SOURCE_META[source].label}`); return; }
     setLoadingMeta(true); setBook(null); setSelected(new Set()); setDiags([]); setCanonical(null);
     persistKeyRef.current = null;
     try {
-      const r = await fetch(`${SUPABASE_URL}/functions/v1/anyflip-download`, {
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/${SOURCE_META[source].metaFn}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY },
         body: JSON.stringify({ url: url.trim() }),
@@ -268,11 +291,14 @@ const Index = () => {
           const wait = Math.max(activePace, throttleUntil - Date.now());
           if (wait > 0) await new Promise((r) => setTimeout(r, wait));
           try {
-            const proxied = proxyUrl(pageUrl);
+            const proxied = proxyUrl(source, pageUrl);
+            const finalHdr = source === "anyflip" ? "X-Anyflip-Final-Url" : "X-Slideshare-Final-Url";
+            const refHdr = source === "anyflip" ? "X-Anyflip-Referer" : "X-Slideshare-Referer";
+            const attHdr = source === "anyflip" ? "X-Anyflip-Attempts" : "X-Slideshare-Attempts";
             const r = await fetch(proxied, { headers: { Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY } });
-            const finalUrl = r.headers.get("X-Anyflip-Final-Url") || undefined;
-            const referer = r.headers.get("X-Anyflip-Referer") || undefined;
-            const attemptsRaw = r.headers.get("X-Anyflip-Attempts");
+            const finalUrl = r.headers.get(finalHdr) || undefined;
+            const referer = r.headers.get(refHdr) || undefined;
+            const attemptsRaw = r.headers.get(attHdr);
             const attempts = attemptsRaw ? JSON.parse(attemptsRaw) : undefined;
 
             if (!r.ok) {
@@ -284,7 +310,7 @@ const Index = () => {
                 if (r2.ok) {
                   const blob = await r2.blob();
                   decoded[slot] = await imageBlobToJpeg(blob);
-                  updateDiag(diagSlot(origIdx), { status: "ok", proxyStatus: r2.status, finalUrl: r2.headers.get("X-Anyflip-Final-Url") || undefined, referer, attempts });
+                  updateDiag(diagSlot(origIdx), { status: "ok", proxyStatus: r2.status, finalUrl: r2.headers.get(finalHdr) || undefined, referer, attempts });
                   onOk();
                 } else {
                   updateDiag(diagSlot(origIdx), { status: "fail", proxyStatus: r2.status, finalUrl, referer, attempts, error: `Retry ${r2.status}` });
@@ -360,23 +386,43 @@ const Index = () => {
     <main className="min-h-screen flex items-center justify-center p-4 sm:p-6">
       <div className="w-full max-w-3xl space-y-8">
         <header className="text-center space-y-4">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl text-white"
-               style={{ background: "var(--gradient-primary)", boxShadow: "var(--shadow-glow)" }}>
-            <BookOpen className="w-8 h-8" />
+          <div className="inline-flex items-center justify-center gap-2">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl text-white"
+                 style={{ background: "var(--gradient-primary)", boxShadow: "var(--shadow-glow)" }}>
+              <BookOpen className="w-7 h-7" />
+            </div>
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl text-white"
+                 style={{ background: "var(--gradient-primary)", boxShadow: "var(--shadow-glow)" }}>
+              <Presentation className="w-7 h-7" />
+            </div>
           </div>
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">
-            AnyFlip <span className="bg-clip-text text-transparent" style={{ backgroundImage: "var(--gradient-primary)" }}>Downloader</span>
+            Deck <span className="bg-clip-text text-transparent" style={{ backgroundImage: "var(--gradient-primary)" }}>Downloader</span>
           </h1>
           <p className="text-muted-foreground text-base sm:text-lg">
-            Preview halaman, pilih yang anda mahu, kemudian muat turun sebagai PDF.
+            Muat turun buku <strong>AnyFlip</strong> & pembentangan <strong>SlideShare</strong> sebagai PDF.
           </p>
         </header>
 
         <Card className="p-6 sm:p-8 space-y-5 border-0" style={{ boxShadow: "var(--shadow-card)" }}>
+          <Tabs value={source} onValueChange={(v) => {
+            setSource(v as Source);
+            setBook(null); setCanonical(null); setDiags([]); setSelected(new Set()); setUrl("");
+          }}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="anyflip" disabled={loading}>
+                <BookOpen className="w-4 h-4 mr-2" /> AnyFlip
+              </TabsTrigger>
+              <TabsTrigger value="slideshare" disabled={loading}>
+                <Presentation className="w-4 h-4 mr-2" /> SlideShare
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
           <div className="space-y-2">
-            <Label htmlFor="url">URL Buku AnyFlip</Label>
+            <Label htmlFor="url">URL {SOURCE_META[source].label}</Label>
             <div className="flex gap-2">
-              <Input id="url" type="url" placeholder="https://anyflip.com/abcd/efgh/" value={url}
+              <Input id="url" type="url" placeholder={SOURCE_META[source].placeholder} value={url}
                      onChange={(e) => { setUrl(e.target.value); setBook(null); setCanonical(null); }}
                      disabled={loading}
                      onKeyDown={(e) => e.key === "Enter" && !loading && handleLoad()}
@@ -391,6 +437,7 @@ const Index = () => {
               </div>
             )}
           </div>
+
 
           <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
             <CollapsibleTrigger className="flex items-center justify-between w-full text-sm py-2 px-3 rounded-md bg-muted hover:bg-muted/70 transition">
@@ -484,7 +531,7 @@ const Index = () => {
                           : "border-border hover:border-primary/50"
                       } ${downloading ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
                     >
-                      <img src={proxyUrl(p, thumbBust)} alt={`Halaman ${i + 1}`} loading="lazy"
+                      <img src={proxyUrl(source, p, thumbBust)} alt={`Halaman ${i + 1}`} loading="lazy"
                            className="w-full h-full object-cover" />
                       <div className="absolute top-1 left-1">
                         <Checkbox checked={isSel} className="bg-background/90 border-2" tabIndex={-1} />
@@ -574,7 +621,7 @@ const Index = () => {
         </Card>
 
         <div className="text-center text-xs text-muted-foreground">
-          Tampal URL daripada bar alamat AnyFlip (cth: <code className="px-1.5 py-0.5 rounded bg-muted">anyflip.com/xxx/yyy/</code>)
+          {SOURCE_META[source].hint}
         </div>
       </div>
     </main>
