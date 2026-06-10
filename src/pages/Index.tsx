@@ -510,7 +510,7 @@ const Index = () => {
                           : "border-border hover:border-primary/50"
                       } ${downloading ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}
                     >
-                      <img src={proxyUrl(p, thumbBust)} alt={`Halaman ${i + 1}`} loading="lazy"
+                      <img src={proxyUrl(source, p, thumbBust)} alt={`Halaman ${i + 1}`} loading="lazy"
                            className="w-full h-full object-cover" />
                       <div className="absolute top-1 left-1">
                         <Checkbox checked={isSel} className="bg-background/90 border-2" tabIndex={-1} />
