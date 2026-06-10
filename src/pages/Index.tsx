@@ -129,6 +129,7 @@ function exportDiags(format: "json" | "csv", diags: PageDiag[], canonical?: stri
 }
 
 const Index = () => {
+  const [source, setSource] = useState<Source>("anyflip");
   const [url, setUrl] = useState("");
   const [concurrency, setConcurrency] = useState(3);
   const [delayMs, setDelayMs] = useState(150);
