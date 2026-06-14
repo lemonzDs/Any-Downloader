@@ -413,7 +413,7 @@ const Index = () => {
             Deck <span className="bg-clip-text text-transparent" style={{ backgroundImage: "var(--gradient-primary)" }}>Downloader</span>
           </h1>
           <p className="text-muted-foreground text-base sm:text-lg">
-            Muat turun buku <strong>AnyFlip</strong> & pembentangan <strong>SlideShare</strong> sebagai PDF.
+            Muat turun <strong>AnyFlip</strong>, <strong>SlideShare</strong> & <strong>Scribd</strong> sebagai PDF.
           </p>
         </header>
 
