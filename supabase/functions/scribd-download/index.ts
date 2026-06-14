@@ -112,11 +112,17 @@ Deno.serve(async (req) => {
     let extracted: Extracted | null = null;
     const tried: string[] = [];
     const errors: string[] = [];
+    let challenge = false;
 
     for (const u of [embedUrl, canonicalUrl]) {
       tried.push(u);
       try {
         const html = await fetchHtml(u, "https://www.scribd.com/");
+        if (/<title>\s*Client Challenge\s*<\/title>/i.test(html) || /\/_fs-ch-[^"']+\/script\.js/i.test(html)) {
+          challenge = true;
+          errors.push(`${u} → bot challenge (Client Challenge)`);
+          continue;
+        }
         extracted = fromHtml(html);
         if (extracted && extracted.pages.length > 0) break;
       } catch (e) {
@@ -125,11 +131,14 @@ Deno.serve(async (req) => {
     }
 
     if (!extracted || extracted.pages.length === 0) {
+      const msg = challenge
+        ? "Scribd memblokir akses automatik (Client Challenge / anti-bot). Muat turun Scribd dari pelayan tidak disokong buat masa ini — sila guna pelayar untuk simpan dokumen secara manual."
+        : "Tiada halaman dijumpai. Dokumen Scribd ini mungkin berbayar/dilindungi atau memerlukan akses login.";
       return new Response(JSON.stringify({
-        error: "Tiada halaman dijumpai. Dokumen Scribd ini mungkin berbayar/dilindungi atau memerlukan akses login.",
-        tried, errors,
+        error: msg, tried, errors, challenge,
       }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+
 
     const safeTitle = extracted.title.replace(/[^\w\s.\-]/g, "_").trim().slice(0, 80) || "scribd";
     return new Response(
