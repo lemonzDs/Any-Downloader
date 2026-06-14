@@ -8,14 +8,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Download, BookOpen, Presentation, Loader2, ChevronDown, AlertCircle, CheckCircle2, Settings, Eye, RefreshCw, RotateCcw } from "lucide-react";
+import { Download, BookOpen, Presentation, FileText, Loader2, ChevronDown, AlertCircle, CheckCircle2, Settings, Eye, RefreshCw, RotateCcw } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const STORAGE_PREFIX = "deck:selected:";
 
-type Source = "anyflip" | "slideshare";
+type Source = "anyflip" | "slideshare" | "scribd";
 
 const SOURCE_META: Record<Source, {
   label: string; placeholder: string; metaFn: string; imageFn: string; hint: string;
@@ -34,6 +34,19 @@ const SOURCE_META: Record<Source, {
     imageFn: "slideshare-image",
     hint: "Tampal URL pembentangan SlideShare (cth: slideshare.net/slideshow/...)",
   },
+  scribd: {
+    label: "Scribd",
+    placeholder: "https://www.scribd.com/document/123456789/your-doc",
+    metaFn: "scribd-download",
+    imageFn: "scribd-image",
+    hint: "Tampal URL dokumen/presentation Scribd (cth: scribd.com/document/xxxxx/...)",
+  },
+};
+
+const DIAG_HEADERS: Record<Source, { final: string; referer: string; attempts: string }> = {
+  anyflip: { final: "X-Anyflip-Final-Url", referer: "X-Anyflip-Referer", attempts: "X-Anyflip-Attempts" },
+  slideshare: { final: "X-Slideshare-Final-Url", referer: "X-Slideshare-Referer", attempts: "X-Slideshare-Attempts" },
+  scribd: { final: "X-Scribd-Final-Url", referer: "X-Scribd-Referer", attempts: "X-Scribd-Attempts" },
 };
 
 interface PageDiag {
@@ -292,9 +305,9 @@ const Index = () => {
           if (wait > 0) await new Promise((r) => setTimeout(r, wait));
           try {
             const proxied = proxyUrl(source, pageUrl);
-            const finalHdr = source === "anyflip" ? "X-Anyflip-Final-Url" : "X-Slideshare-Final-Url";
-            const refHdr = source === "anyflip" ? "X-Anyflip-Referer" : "X-Slideshare-Referer";
-            const attHdr = source === "anyflip" ? "X-Anyflip-Attempts" : "X-Slideshare-Attempts";
+            const finalHdr = DIAG_HEADERS[source].final;
+            const refHdr = DIAG_HEADERS[source].referer;
+            const attHdr = DIAG_HEADERS[source].attempts;
             const r = await fetch(proxied, { headers: { Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY } });
             const finalUrl = r.headers.get(finalHdr) || undefined;
             const referer = r.headers.get(refHdr) || undefined;
@@ -409,12 +422,15 @@ const Index = () => {
             setSource(v as Source);
             setBook(null); setCanonical(null); setDiags([]); setSelected(new Set()); setUrl("");
           }}>
-            <TabsList className="grid w-full grid-cols-2">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="anyflip" disabled={loading}>
                 <BookOpen className="w-4 h-4 mr-2" /> AnyFlip
               </TabsTrigger>
               <TabsTrigger value="slideshare" disabled={loading}>
                 <Presentation className="w-4 h-4 mr-2" /> SlideShare
+              </TabsTrigger>
+              <TabsTrigger value="scribd" disabled={loading}>
+                <FileText className="w-4 h-4 mr-2" /> Scribd
               </TabsTrigger>
             </TabsList>
           </Tabs>
