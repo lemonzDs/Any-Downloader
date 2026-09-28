@@ -88,27 +88,32 @@ function parseRanges(input: string, max: number): { ok: number[]; bad: string[] 
 }
 
 async function imageBlobToJpeg(blob: Blob): Promise<{ bytes: Uint8Array; w: number; h: number }> {
-  const url = URL.createObjectURL(blob);
+  // JPEG can be embedded directly without re-encoding
+  const head = new Uint8Array(await blob.slice(0, 3).arrayBuffer());
+  if (head[0] === 0xff && head[1] === 0xd8) {
+    const bmp = await createImageBitmap(blob);
+    const w = bmp.width, h = bmp.height;
+    bmp.close();
+    return { bytes: new Uint8Array(await blob.arrayBuffer()), w, h };
+  }
+  const bmp = await createImageBitmap(blob);
+  const w = bmp.width, h = bmp.height;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
   try {
-    const img = await new Promise<HTMLImageElement>((res, rej) => {
-      const i = new Image();
-      i.onload = () => res(i);
-      i.onerror = () => rej(new Error("Imej gagal dimuatkan"));
-      i.src = url;
-    });
-    const canvas = document.createElement("canvas");
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas tak disokong");
-    ctx.drawImage(img, 0, 0);
+    ctx.drawImage(bmp, 0, 0);
     const jpegBlob: Blob = await new Promise((res, rej) =>
-      canvas.toBlob((b) => (b ? res(b) : rej(new Error("toBlob gagal"))), "image/jpeg", 0.9)
+      canvas.toBlob((b) => (b ? res(b) : rej(new Error("toBlob gagal"))), "image/jpeg", 0.85)
     );
-    const buf = new Uint8Array(await jpegBlob.arrayBuffer());
-    return { bytes: buf, w: img.naturalWidth, h: img.naturalHeight };
+    return { bytes: new Uint8Array(await jpegBlob.arrayBuffer()), w, h };
   } finally {
-    URL.revokeObjectURL(url);
+    bmp.close();
+    // Release canvas backing memory immediately (prevents tab crash on big books)
+    canvas.width = 0;
+    canvas.height = 0;
   }
 }
 
@@ -368,8 +373,10 @@ const Index = () => {
       link.href = URL.createObjectURL(blob);
       const suffix = total === book.pages.length ? "" : `-${total}pages`;
       link.download = `${book.title}${suffix}.pdf`;
+      document.body.appendChild(link);
       link.click();
-      URL.revokeObjectURL(link.href);
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 60_000);
 
       if (failed > 0) { toast.warning(`Siap dengan ${failed} halaman gagal — thumbnail ditanda merah`); setDiagOpen(true); }
       else toast.success(`Siap! ${total} halaman`);
