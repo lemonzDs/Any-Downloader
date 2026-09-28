@@ -103,6 +103,53 @@ function fromRegex(html: string): Extracted | null {
   return { title, pages };
 }
 
+function detectTotal(html: string): number {
+  const keys = /"(?:totalSlides|total_slides|slideCount|slide_count|numSlides|totalPages|pageCount)"\s*:\s*"?(\d{1,4})/gi;
+  let max = 0; let m: RegExpExecArray | null;
+  while ((m = keys.exec(html)) !== null) max = Math.max(max, parseInt(m[1], 10));
+  const t = html.match(/(\d{1,4})\s+slides?\b/i);
+  if (!max && t) max = parseInt(t[1], 10);
+  return max > 0 && max < 2000 ? max : 0;
+}
+
+async function exists(url: string): Promise<boolean> {
+  try {
+    const r = await fetch(url, { method: "HEAD", headers: { "User-Agent": UA, Referer: "https://www.slideshare.net/" } });
+    return r.ok;
+  } catch { return false; }
+}
+
+async function expandPages(pages: string[], html: string): Promise<string[]> {
+  const sample = pages[0];
+  const m = sample.match(/^(.*)-(\d+)-(2048|1024|638)\.jpg(\?.*)?$/);
+  if (!m) return pages;
+  const [, base, , res, q = ""] = m;
+  const make = (n: number) => `${base}-${n}-${res}.jpg${q}`;
+  const known = new Map<number, string>();
+  for (const p of pages) {
+    const pm = p.match(/-(\d+)-(?:2048|1024|638)\.jpg/);
+    if (pm && p.startsWith(base)) known.set(parseInt(pm[1], 10), p);
+  }
+  let total = detectTotal(html);
+  if (!total) {
+    // Probe forward in batches until a whole batch misses.
+    let n = Math.max(1, ...known.keys()) + 1;
+    const BATCH = 10;
+    while (n < 1000) {
+      const nums = Array.from({ length: BATCH }, (_, i) => n + i);
+      const ok = await Promise.all(nums.map((k) => known.has(k) ? true : exists(make(k))));
+      const lastOk = nums.filter((_, i) => ok[i]).pop();
+      if (lastOk) total = lastOk;
+      if (!ok[ok.length - 1]) break;
+      n += BATCH;
+    }
+    total = Math.max(total, ...known.keys());
+  }
+  const out: string[] = [];
+  for (let i = 1; i <= total; i++) out.push(known.get(i) || make(i));
+  return out.length ? out : pages;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
