@@ -127,9 +127,10 @@ Deno.serve(async (req) => {
     }
     const html = await r.text();
 
-    if ((body as { debug?: boolean }).debug) {
-      const nd = html.match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i)?.[1] || "";
-      return new Response(JSON.stringify({ len: html.length, title: html.match(/<title>([^<]*)/)?.[1], imgs: [...new Set(html.match(/https?:\/\/[a-z]+\.slidesharecdn\.com\/[^\s"'<>\\]+/g) || [])].slice(0, 40), counts: nd.match(/"[a-zA-Z]*(?:[Cc]ount|[Tt]otal)[a-zA-Z]*":\d+/g)?.slice(0, 40), ndKeys: nd.slice(0, 200), slideKeys: nd.match(/"slide[a-zA-Z]*":("[^"]{0,120}"|\{)/g)?.slice(0, 40) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    if (/<title>\s*Client Challenge\s*<\/title>/i.test(html) || /\/_fs-ch-[^/]+\//.test(html)) {
+      return new Response(JSON.stringify({ error: "SlideShare sedang menyekat permintaan dari server (Client Challenge). Sila cuba lagi sebentar." }), {
+        status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
     const extracted = fromNextData(html) || fromRegex(html);
     if (!extracted || extracted.pages.length === 0) {
@@ -137,6 +138,10 @@ Deno.serve(async (req) => {
         status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // HTML often only lists the first few slides (rest lazy-loaded). Use the
+    // total count if present, then probe the CDN for more slides.
+    extracted.pages = await expandPages(extracted.pages, html);
 
     const safeTitle = extracted.title.replace(/[^\w\s.\-]/g, "_").trim().slice(0, 80) || "slideshare";
     return new Response(
