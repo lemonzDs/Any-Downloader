@@ -347,12 +347,14 @@ const Index = () => {
           }
           done++;
           setProgress(Math.round((done / total) * 90));
-          if (cursor - done > activeConc) return;
+          // Auto-tune: if concurrency was reduced, pause this worker briefly
+          while (cursor < total && cursor - done > activeConc) {
+            await new Promise((r) => setTimeout(r, 200));
+          }
         }
       };
       const startWorkers = Math.max(1, Math.min(8, concurrency));
-      const spawn = async (): Promise<void> => { await work(); if (done < total) return spawn(); };
-      await Promise.all(Array.from({ length: startWorkers }, () => spawn()));
+      await Promise.all(Array.from({ length: startWorkers }, () => work()));
 
       const failed = decoded.filter((p) => !p).length;
 
