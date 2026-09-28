@@ -127,6 +127,10 @@ Deno.serve(async (req) => {
     }
     const html = await r.text();
 
+    if ((body as { debug?: boolean }).debug) {
+      const nd = html.match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i)?.[1] || "";
+      return new Response(JSON.stringify({ len: html.length, title: html.match(/<title>([^<]*)/)?.[1], imgs: [...new Set(html.match(/https?:\/\/[a-z]+\.slidesharecdn\.com\/[^\s"'<>\\]+/g) || [])].slice(0, 40), counts: nd.match(/"[a-zA-Z]*(?:[Cc]ount|[Tt]otal)[a-zA-Z]*":\d+/g)?.slice(0, 40), ndKeys: nd.slice(0, 200), slideKeys: nd.match(/"slide[a-zA-Z]*":("[^"]{0,120}"|\{)/g)?.slice(0, 40) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
     const extracted = fromNextData(html) || fromRegex(html);
     if (!extracted || extracted.pages.length === 0) {
       return new Response(JSON.stringify({ error: "Tiada slide dijumpai dalam halaman SlideShare" }), {
